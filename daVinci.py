@@ -44,7 +44,7 @@ sys.path.append(lib_dir)
 
 from finance import *
 from transform_lib import *
-
+from sciDataRead import *
 
 
 ###############################################################################
