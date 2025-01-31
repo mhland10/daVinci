@@ -105,13 +105,13 @@ class rake:
         
         # Load the data from the *.vtk files
         # Expand wildcard pattern into actual file list with natural sorting
-        file_list = natsorted(glob.glob(datafile))  # Use natsorted instead of sorted
-        if not file_list:
+        self.file_list = natsorted(glob.glob(datafile))  # Use natsorted instead of sorted
+        if not self.file_list:
             raise FileNotFoundError(f"No files found matching {datafile}")
         if file_format.lower()=="vtk" or file_format.lower()==".vtk":
-            data = pasi.OpenDataFile( file_list )
+            data = pasi.OpenDataFile( self.file_list )
         elif file_format.lower()=="h5" or file_format.lower()==".h5":
-            data = pasi.CONVERGECFDReader(FileNames=file_list)
+            data = pasi.CONVERGECFDReader(FileName=datafile)
         else:
             raise ValueError(f"Unsupported file format:\t{file_format}")
 
