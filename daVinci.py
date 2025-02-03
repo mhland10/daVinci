@@ -42,7 +42,7 @@ script_dir = os.path.dirname(os.path.realpath(__file__))
 lib_dir = os.path.join(script_dir, 'lib')
 sys.path.append(lib_dir)
 
-from finance import *
+#from finance import *
 from transform_lib import *
 from sciDataRead import *
 
