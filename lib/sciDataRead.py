@@ -34,9 +34,6 @@ Version Date        Description
 
 import os, glob
 import numpy as np
-import paraview.simple as pasi
-import vtk.util.numpy_support as nps
-import vtk
 import sys
 import pandas as pd
 from natsort import natsorted
@@ -92,32 +89,55 @@ class rake:
         if not len( points ) == 3:
             raise ValueError( "Not enough dimensions in points. Make sure three (3) dimensions are present.")
         
+        # Expand wildcard pattern into actual file list with natural sorting
+        self.datafile = datafile
+        self.file_list = natsorted(glob.glob(datafile))  # Use natsorted instead of sorted
+        print("File list:\t"+str(self.file_list))
+
+        # Store the file format
+        self.file_format = file_format
+
+        # Store the points on the rake
+        self.ext_points = [[points[0][i], points[1][i], points[2][i]] for i in range(len(points[0]))]
+
+        # Set coordinate change variable to track if the coordinate change of the rake has occured
+        self.coord_change=False                
+
+    def paraviewDataRead( cls ):
+        """
+        This method reads the data using the Paraview engine and stores the data in the rake object
+            in a dictionary.
+
+        """
+
+        import paraview.simple as pasi
+        import vtk
+
         # If the file format is inferred, find what it is
-        if file_format is None:
+        if cls.file_format is None:
             ext = os.path.splitext(datafile)[-1].lower()
             if ext == ".vtk":
-                file_format = "vtk"
+                cls.file_format = "vtk"
             elif ext == ".h5":
-                file_format = "h5"
+                cls.file_format = "h5"
             else:
                 raise ValueError(f"Unsupported file format: {ext}")
             
         
         # Load the data from the *.vtk files
-        # Expand wildcard pattern into actual file list with natural sorting
-        self.file_list = natsorted(glob.glob(datafile))  # Use natsorted instead of sorted
-        if not self.file_list:
-            raise FileNotFoundError(f"No files found matching {datafile}")
-        if file_format.lower()=="vtk" or file_format.lower()==".vtk":
-            data = pasi.OpenDataFile( self.file_list )
-        elif file_format.lower()=="h5" or file_format.lower()==".h5":
-            data = pasi.CONVERGECFDReader(FileName=datafile)
+        if not cls.file_list:
+            raise FileNotFoundError(f"No files found matching {cls.datafile}")
+        if cls.file_format.lower()=="vtk" or cls.file_format.lower()==".vtk":
+            data = pasi.OpenDataFile( cls.file_list )
+        elif cls.file_format.lower()=="h5" or cls.file_format.lower()==".h5":
+            data = pasi.CONVERGECFDReader(FileName=cls.file_list[0])
         else:
-            raise ValueError(f"Unsupported file format:\t{file_format}")
+            raise ValueError(f"Unsupported file format:\t{cls.file_format}")
+        print("Available data attributes:\t"+str(dir(data)))
 
-
-        # Change the format of the points
-        self.ext_points = [[points[0][i], points[1][i], points[2][i]] for i in range(len(points[0]))]
+        # Get available time steps
+        cls.time_steps = data.TimestepValues
+        print(f"Time steps available: {cls.time_steps}")
 
         # Create the rake in Paraview
         programmableSource = pasi.ProgrammableSource()
@@ -126,7 +146,7 @@ class rake:
         import vtk
 
         # Manually input the external points
-        custom_points = {self.ext_points}
+        custom_points = {cls.ext_points}
 
         # Create a vtkPoints object to store the points
         points = vtk.vtkPoints()
@@ -146,25 +166,58 @@ class rake:
         output.SetLines(lines)
         """
 
-        # Pull data from rake
+        #
+        #   Get point data for initialization
+        # 
         resample = pasi.ResampleWithDataset()
         resample.SourceDataArrays = [data]
         resample.DestinationMesh = programmableSource
+        print("Resample attributes:\t"+str(dir(resample)))
         pasi.UpdatePipeline()
+        resampled_output = pasi.servermanager.Fetch(resample)
+        point_data = resampled_output.GetPointData()
 
-        # Put data in
-        self.resampled_output = pasi.servermanager.Fetch(resample)
-        point_data = self.resampled_output.GetPointData()
-        num_point_arrays = point_data.GetNumberOfArrays()
-        self.array_headers = [point_data.GetArrayName(i) for i in range(point_data.GetNumberOfArrays())]
-        print("Available headers:\t"+str(self.array_headers))
+        # Get array headers
+        cls.array_headers = [point_data.GetArrayName(i) for i in range(point_data.GetNumberOfArrays())]
+        print("Available headers:\t" + str(cls.array_headers))
+
+        # Initialize storage for extracted data
+        cls.data_dict = {header: [] for header in cls.array_headers}
+
+        # Iterate through time steps
+        # TODO: Make parallel
+        for t in cls.time_steps:
+            data.UpdatePipeline(time=t)  # Ensure the data is updated for this time step
+            
+            # Resample at current time step
+            resample = pasi.ResampleWithDataset()
+            resample.SourceDataArrays = [data]
+            resample.DestinationMesh = programmableSource
+            #resample.InterpolationType = "Linear"  # or "Cubic" depending on the method available
+            pasi.UpdatePipeline()
+
+            # Fetch resampled output
+            resampled_output = pasi.servermanager.Fetch(resample)
+            point_data = resampled_output.GetPointData()
+
+            # Extract data for each variable and store it
+            for header in cls.array_headers:
+                array = point_data.GetArray(header)
+                if array:
+                    cls.data_dict[header].append([array.GetValue(i) for i in range(array.GetNumberOfTuples())])
+
+            # Clean up for memory efficiency
+            pasi.Delete(resample)
+            del resample
+
+        # Convert lists to NumPy arrays to have shape (num_timesteps, num_rake_points)
+        for header in cls.data_dict:
+            cls.data_dict[header] = np.array(cls.data_dict[header])  
 
         # Clean up
         pasi.Delete( data )
-        pasi.Delete( resample )
         pasi.Delete( programmableSource )
         del data
-        del resample
         del programmableSource
 
         # Restore standard output and error to the default
@@ -174,13 +227,48 @@ class rake:
         # Optionally suppress VTK messages entirely
         vtk_output_window = vtk.vtkStringOutputWindow()
         vtk.vtkOutputWindow.SetInstance(vtk_output_window)
-        vtk.vtkOutputWindow.GetInstance().SetGlobalWarningDisplay(False)
+        vtk.vtkOutputWindow.GetInstance().SetGlobalWarningDisplay(False) 
 
-        self.data_loc = file_format
+    def convergeH5DataRead( cls ):
+        """
+        This method reads the data using the Converge engine and stores the data in the rake object
+            in a dictionary.
 
-        # Set coordinate change variable to track if the coordinate change of the rake has occured
-        self.coord_change=False
+        """
+
+        import paraview.simple as pasi
+        import paraview
+
+        import vtk
         
+        # Load the data from the files
+        cls.data = paraview.simple.CONVERGECFDReader(FileName=cls.file_list[0])
+        cls.data.SMProxy.SetAnnotation("ParaView::Name", "MyData")
+        print("Available data attributes:\t"+str(dir(cls.data)))
+
+        # Get available time steps
+        cls.time_steps = cls.data.TimestepValues
+        print(f"Time steps available: {cls.time_steps}")
+
+        # Find Source
+        sources = pasi.GetSources()
+        print(f"Available sources: {sources}")
+        if sources:
+            source_name = list(sources.keys())[0][0]  # Extract the string name
+            source = pasi.FindSource(source_name)
+            print(f"Using source: {source_name}")
+        else:
+            print("No sources found!")
+        cls.source = source
+
+        # Extract Coordinates
+        cls.coordinates1 = paraview.simple.Coordinates(registrationName='Coordinates1', Input=source)
+        cls.coordinates1.AppendPointLocations = 0
+
+        
+
+
+
     def dataToDictionary( cls ):
         """
         Transfers the data from the Paraview-native format to a Python-native format of a
