@@ -159,6 +159,7 @@ class rake:
 
         # Store the points on the rake
         self.ext_points = [[points[0][i], points[1][i], points[2][i]] for i in range(len(points[0]))]
+        self.points = np.array( self.ext_points )
 
         # Set coordinate change variable to track if the coordinate change of the rake has occured
         self.coord_change=False                
@@ -289,7 +290,7 @@ class rake:
         vtk.vtkOutputWindow.SetInstance(vtk_output_window)
         vtk.vtkOutputWindow.GetInstance().SetGlobalWarningDisplay(False) 
 
-    def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , rm_after_read=False , mp_method=None , N_cores=None ):
+    def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , write=True , rm_after_read=False , mp_method=None , N_cores=None ):
         """
         This method reads the data using the Converge engine and stores the data in the rake object
             in a dictionary.
@@ -317,15 +318,24 @@ class rake:
                                                                 Note that this only works when
                                                                 N_dim=2.
 
+                                                - "Linear" or "Lin":    The SciPy linear 
+                                                                        interpolator. Uses Delaunay
+                                                                        triangulation.
+
             overwrite (boolean, optional):  Whether the reader will overwrite *.csv files if they
-                                                are already present.
+                                                are already present. Defaults to False.
+
+            write (boolean, optional):  Whether the reader will overwrite any file automatically.
+                                            Defaults to True.
             
             rm_after_read (boolean, optional):  Whether the *.csv file that corresponds to a time
                                                     step will be deleted after reading the data
                                                     into a Pandas dataframe. Defaults to False.
 
             mp_method (string, optional):   Which multiprocessing method to parallelize the
-                                                operations. 
+                                                operations. Not currently implemented.
+
+            N_cores (string, optional): The number of processes that multiprocessing can use.
 
         """
 
@@ -366,26 +376,31 @@ class rake:
         cls.coordinates1.AppendPointLocations = 0
         cls.coordinates1.AppendCellCenters = 1
 
+        # Writing data to csv
+        os.chdir( working_dir )
+        file_write_nm = working_dir + "\\" + data_prefix + str(0) + ".csv"
+        file_start = working_dir + "\\" + data_prefix + ".csv"
+        if (overwrite or not os.path.exists(file_write_nm)) and write:
+            print(f"Changing directory to {os.getcwd()}\n to write {file_write_nm}")
+            pasi.SaveData( file_start , proxy=cls.coordinates1, 
+                                    WriteTimeSteps=1, WriteTimeStepsSeparately=1, 
+                                    Filenamesuffix='_%d', ChooseArraysToWrite=0, 
+                                    PointDataArrays=[], 
+                                    CellDataArrays = cls.source.CellData.keys() + ["CellCenters"] , 
+                                    FieldDataArrays=[], VertexDataArrays=[], EdgeDataArrays=[], 
+                                    RowDataArrays=[], Precision=sig_figs, UseStringDelimiter=1, 
+                                    UseScientificNotation=1, FieldAssociation='Cell Data', 
+                                    AddMetaData=0, AddTimeStep=0, AddTime=0)
+
         if not mp_method:
 
             for t_i , t in enumerate( cls.time_steps ):
 
-                # Save the data to a *.csv
-                os.chdir( working_dir )
-                file_write_nm = working_dir + "\\" + data_prefix + str(t_i) + ".csv"
-                if overwrite or not os.path.exists(file_write_nm):
-                    print(f"Changing directory to {os.getcwd()}\n to write {file_write_nm}")
-                    pasi.SaveData( file_write_nm , proxy=cls.coordinates1, 
-                                WriteTimeSteps=t_i, WriteTimeStepsSeparately=0, 
-                                Filenamesuffix='_%d', ChooseArraysToWrite=0, 
-                                PointDataArrays=[], 
-                                CellDataArrays = cls.source.CellData.keys() + ["CellCenters"] , 
-                                FieldDataArrays=[], VertexDataArrays=[], EdgeDataArrays=[], 
-                                RowDataArrays=[], Precision=sig_figs, UseStringDelimiter=1, 
-                                UseScientificNotation=1, FieldAssociation='Cell Data', 
-                                AddMetaData=0, AddTimeStep=0, AddTime=0)
+                print(f"Time Index:\t{t_i}")        
+                file_write_nm = working_dir + "\\" + data_prefix + "_" + str(t_i) + ".csv"            
                 
                 # Pull data into dataframe
+                print(f"Reading {file_write_nm}...")
                 cls.df_read = pd.read_csv( file_write_nm,
                                     sep=',',  # Use '\t' if your file is tab-delimited
                                     header=0,  # The first row as column names
@@ -415,130 +430,19 @@ class rake:
                 # Break the data into a dictionary
                 # TODO: RBFInterpolator() takes up too much RAM. At some point, we should make an optimized
                 #           version that can fit into limited RAM.
+                print("Interpolating points...")
                 for i , h in enumerate( cls.df_data.columns ):
                     col_data = cls.df_data[h].to_numpy()
                     if interpolator.lower()=="rbf":
                         cls.data[h][t_i,:] = sint.RBFInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
                     elif interpolator.lower()=="ct" and N_dims==2:
                         cls.data[h][t_i,:] = sint.CloughTocher2DInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
+                    elif interpolator.lower()=="linear" or interpolator.lower()=="lin":
+                        cls.data[h][t_i,:] = sint.LinearNDInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
                     else:
                         raise ValueError("Invalid interpolator selected.")
-                    
-        elif mp_method.lower()=="mp" or mp_method.lower()=="multiprocessing":
-
-            import multiprocessing as mp                        
-
-            print("**Not currently implemented**")
-
-        elif mp_method.lower()=="mpi":
-
-            print("**Under construction**")
-
-            from mpi4py import MPI
-
-            comm = MPI.COMM_WORLD
-            rank = comm.Get_rank()
-            size = comm.Get_size()
-            
-            print(f"Running on {size} ranks...")
-
-            # Distribute time steps to processes
-            time_steps_per_rank = len(cls.time_steps) // size
-            print(f"There are {time_steps_per_rank} time steps per rank.")
-            cls.time_indices = np.arange(len(cls.time_steps))
-            cls.time_steps_chunks = np.array_split( cls.time_steps , time_steps_per_rank )
-            cls.time_index_chunks = np.array_split( cls.time_indices , time_steps_per_rank )
-            print(f"Time Step chunks: {cls.time_index_chunks}")
-            print(f"First time step chunk: {cls.time_index_chunks[0]}")
-
-            # Set up dictionary to receive the rank data
-            rank_data = {}
-
-            # Iterate over time steps assigned to the current rank
-            for t_i in cls.time_index_chunks[rank]:
-                t = cls.time_steps[int(t_i)]
-
-                # Save the data to a *.csv for each time step
-                os.chdir(working_dir)
-                file_write_nm = working_dir + "\\" + data_prefix + str(t_i) + ".csv"
-                
-                if overwrite or not os.path.exists(file_write_nm):
-                    print(f"Rank {rank} changing directory to {os.getcwd()}\n to write {file_write_nm}")
-                    pasi.SaveData(
-                        file_write_nm, 
-                        proxy=cls.coordinates1,
-                        WriteTimeSteps=t_i, 
-                        WriteTimeStepsSeparately=0,
-                        Filenamesuffix='_%d', 
-                        ChooseArraysToWrite=0, 
-                        PointDataArrays=[],
-                        CellDataArrays=cls.source.CellData.keys() + ["CellCenters"], 
-                        FieldDataArrays=[], 
-                        VertexDataArrays=[], 
-                        EdgeDataArrays=[], 
-                        RowDataArrays=[], 
-                        Precision=sig_figs, 
-                        UseStringDelimiter=1, 
-                        UseScientificNotation=1, 
-                        FieldAssociation='Cell Data', 
-                        AddMetaData=0, 
-                        AddTimeStep=0, 
-                        AddTime=0
-                    )
-
-                # Pull data into DataFrame
-                cls.df_read = pd.read_csv(file_write_nm, sep=',', header=0)
-
-                if rm_after_read:
-                    os.remove(file_write_nm)
-
-                # Separate into coordinates and data
-                data_columns = [col for col in cls.df_read.columns if not col.startswith('CellCenters')]
-                cls.df_data = cls.df_read[data_columns]
-                coord_columns = [col for col in cls.df_read.columns if col.startswith('CellCenters')]
-                cls.df_coord = cls.df_read[coord_columns]
-
-                # Set up coordinates and rake coordinates as numpy arrays
-                cls.coordinates = np.zeros((len(cls.df_coord[cls.df_coord.keys()[0]].to_numpy()), N_dims))
-                for i in range(N_dims):
-                    cls.coordinates[:, i] = cls.df_coord[cls.df_coord.keys()[i]].to_numpy()
-
-                cls.rake_coordinates = np.zeros((np.shape(cls.ext_points)[0], N_dims))
-                for i in range(np.shape(cls.ext_points)[0]):
-                    cls.rake_coordinates[i, :] = cls.ext_points[i][:N_dims]
-
-                # Store data on the current rank
-                rank_data[t_i] = {}
-
-                for i, h in enumerate(cls.df_data.columns):
-                    col_data = cls.df_data[h].to_numpy()
-                    if interpolator.lower() == "rbf":
-                        rank_data[t_i][h] = sint.RBFInterpolator(cls.coordinates, col_data)(cls.rake_coordinates)
-                    elif interpolator.lower() == "ct" and N_dims == 2:
-                        rank_data[t_i][h] = sint.CloughTocher2DInterpolator(cls.coordinates, col_data)(cls.rake_coordinates)
-                    else:
-                        raise ValueError("Invalid interpolator selected.")
-
-            # Gather the data from all ranks to rank 0
-            all_data = comm.gather(rank_data, root=0)
-
-            # Rank 0 combines the results
-            if rank == 0:
-                # Initialize the final data dictionary
-                cls.data = {}
-                
-                for rank_data_chunk in all_data:
-                    for t_i, data in rank_data_chunk.items():
-                        if t_i not in cls.data:
-                            cls.data[t_i] = data
-                        else:
-                            for h, val in data.items():
-                                cls.data[t_i][h] = np.concatenate((cls.data[t_i][h], val))
-
-
-            MPI.Finalize()
-                        
-
+                print(f"Interpolation Finished for Time Index {t_i}")
+                                
         else:
             raise ValueError("No valid multiprocessing method selected.")
                 
@@ -550,15 +454,46 @@ class rake:
         This method writes cls.data to an *.h5 file.
 
         Args:
-            filename (string):  The name of the hdf5 file that will be written.
+            filename (string):      The file name.
+            working_dir (string):   The directory where the file is.
 
         """
 
         import h5py as h5
 
-        with h5.File( filename , 'w' ) as f:
-            for key , value in cls.data.items():
+        with h5.File(os.path.join(working_dir, filename + ".h5"), "a") as f:
+            for key, value in cls.data.items():
+                if key in f:
+                    del f[key]  # Remove existing dataset
                 f.create_dataset(key, data=value)
+
+            if "timesteps" in f:
+                del f["timesteps"]
+            f.create_dataset("timesteps", data=cls.time_steps)
+
+    def hdf5Read( cls , filename , working_dir ):
+        """
+        This method reads the data from an *.h5 file that corresponds to the rake object.
+
+        Args:
+            filename (string):      The file name.
+            working_dir (string):   The directory where the file is.
+
+        """
+
+        import h5py as h5
+
+        cls.data = {}
+        with h5.File(os.path.join(working_dir, filename + ".h5"), "r") as f:
+            # Get all the keys
+            keys_avail = list(f.keys())
+            print(f"Available keys:\t{keys_avail}")
+
+            for k in keys_avail:
+                if k=="timesteps":
+                    cls.time_steps = f[k][()]
+                else:
+                    cls.data[k] = f[k][()]
 
     def dataToDictionary( cls ):
         """
@@ -877,5 +812,113 @@ class rake:
 
         del cls.resampled_output
 
+"""
+        elif mp_method.lower()=="mpi":
 
+            print("**Under construction**")
+
+            from mpi4py import MPI
+
+            comm = MPI.COMM_WORLD
+            rank = comm.Get_rank()
+            size = comm.Get_size()
+            
+            print(f"Running on {size} ranks...")
+
+            # Distribute time steps to processes
+            time_steps_per_rank = len(cls.time_steps) // size
+            print(f"There are {time_steps_per_rank} time steps per rank.")
+            cls.time_indices = np.arange(len(cls.time_steps))
+            cls.time_steps_chunks = np.array_split( cls.time_steps , time_steps_per_rank )
+            cls.time_index_chunks = np.array_split( cls.time_indices , time_steps_per_rank )
+            print(f"Time Step chunks: {cls.time_index_chunks}")
+            print(f"First time step chunk: {cls.time_index_chunks[0]}")
+
+            # Set up dictionary to receive the rank data
+            rank_data = {}
+
+            # Iterate over time steps assigned to the current rank
+            for t_i in cls.time_index_chunks[rank]:
+                t = cls.time_steps[int(t_i)]
+
+                # Save the data to a *.csv for each time step
+                os.chdir(working_dir)
+                file_write_nm = working_dir + "\\" + data_prefix + str(t_i) + ".csv"
+                
+                if overwrite or not os.path.exists(file_write_nm):
+                    print(f"Rank {rank} changing directory to {os.getcwd()}\n to write {file_write_nm}")
+                    pasi.SaveData(
+                        file_write_nm, 
+                        proxy=cls.coordinates1,
+                        WriteTimeSteps=t_i, 
+                        WriteTimeStepsSeparately=0,
+                        Filenamesuffix='_%d', 
+                        ChooseArraysToWrite=0, 
+                        PointDataArrays=[],
+                        CellDataArrays=cls.source.CellData.keys() + ["CellCenters"], 
+                        FieldDataArrays=[], 
+                        VertexDataArrays=[], 
+                        EdgeDataArrays=[], 
+                        RowDataArrays=[], 
+                        Precision=sig_figs, 
+                        UseStringDelimiter=1, 
+                        UseScientificNotation=1, 
+                        FieldAssociation='Cell Data', 
+                        AddMetaData=0, 
+                        AddTimeStep=0, 
+                        AddTime=0
+                    )
+
+                # Pull data into DataFrame
+                cls.df_read = pd.read_csv(file_write_nm, sep=',', header=0)
+
+                if rm_after_read:
+                    os.remove(file_write_nm)
+
+                # Separate into coordinates and data
+                data_columns = [col for col in cls.df_read.columns if not col.startswith('CellCenters')]
+                cls.df_data = cls.df_read[data_columns]
+                coord_columns = [col for col in cls.df_read.columns if col.startswith('CellCenters')]
+                cls.df_coord = cls.df_read[coord_columns]
+
+                # Set up coordinates and rake coordinates as numpy arrays
+                cls.coordinates = np.zeros((len(cls.df_coord[cls.df_coord.keys()[0]].to_numpy()), N_dims))
+                for i in range(N_dims):
+                    cls.coordinates[:, i] = cls.df_coord[cls.df_coord.keys()[i]].to_numpy()
+
+                cls.rake_coordinates = np.zeros((np.shape(cls.ext_points)[0], N_dims))
+                for i in range(np.shape(cls.ext_points)[0]):
+                    cls.rake_coordinates[i, :] = cls.ext_points[i][:N_dims]
+
+                # Store data on the current rank
+                rank_data[t_i] = {}
+
+                for i, h in enumerate(cls.df_data.columns):
+                    col_data = cls.df_data[h].to_numpy()
+                    if interpolator.lower() == "rbf":
+                        rank_data[t_i][h] = sint.RBFInterpolator(cls.coordinates, col_data)(cls.rake_coordinates)
+                    elif interpolator.lower() == "ct" and N_dims == 2:
+                        rank_data[t_i][h] = sint.CloughTocher2DInterpolator(cls.coordinates, col_data)(cls.rake_coordinates)
+                    else:
+                        raise ValueError("Invalid interpolator selected.")
+
+            # Gather the data from all ranks to rank 0
+            all_data = comm.gather(rank_data, root=0)
+
+            # Rank 0 combines the results
+            if rank == 0:
+                # Initialize the final data dictionary
+                cls.data = {}
+                
+                for rank_data_chunk in all_data:
+                    for t_i, data in rank_data_chunk.items():
+                        if t_i not in cls.data:
+                            cls.data[t_i] = data
+                        else:
+                            for h, val in data.items():
+                                cls.data[t_i][h] = np.concatenate((cls.data[t_i][h], val))
+
+
+            MPI.Finalize()
+        """
 
