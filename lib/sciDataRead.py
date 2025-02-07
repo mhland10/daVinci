@@ -40,66 +40,6 @@ from natsort import natsorted
 
 #==================================================================================================
 #
-#   Worker Functions for Multiprocessing
-#
-#==================================================================================================
-
-def write_worker_function( input_args ):
-    """
-    This function does the writing of the *.csv's to the working dir.
-
-    Args:
-        time_indices_chunk (int):   The list of time indices that will be written
-                                        relative to Paraview's time indices.
-    """
-
-    import paraview.simple as pasi
-
-    time_indices_chunk , working_dir , data_prefix , write_proxy , data_keys , sig_figs = input_args
-
-    for t_i in time_indices_chunk:
-        file_write_nm = working_dir + "\\" + data_prefix + str(t_i) + ".csv"
-        print(f"Changing directory to {os.getcwd()}\n to write {file_write_nm}")
-        pasi.SaveData( file_write_nm , proxy=write_proxy, 
-                    WriteTimeSteps=t_i, WriteTimeStepsSeparately=0, Filenamesuffix='_%d', 
-                    ChooseArraysToWrite=0, PointDataArrays=[], 
-                    CellDataArrays = data_keys + ["CellCenters"] , 
-                    FieldDataArrays=[], VertexDataArrays=[], EdgeDataArrays=[], RowDataArrays=[],
-                    Precision=sig_figs, UseStringDelimiter=1, UseScientificNotation=1, 
-                    FieldAssociation='Cell Data', AddMetaData=0, AddTimeStep=0, AddTime=0)
-
-    return None
-
-def read_worker_function( input_args ):
-    """
-    This function does the reading of the *.csv's from the working directory to Pandas.
-
-
-    Args:
-        time_indices_chunk (int):   The list of time indices that will be read relative to 
-                                        Paraview's time indices.
-    """
-
-    time_indices_chunk , working_dir , data_prefix , rm_after_read = input_args
-
-    # Create empty list to add the dataframes to
-    df_read_c = []
-
-    for t_i in time_indices_chunk:
-        file_write_nm = working_dir + "\\" + data_prefix + str(t_i) + ".csv"
-        print(f"Reading {file_write_nm}")
-        # Pull data into dataframe
-        df_read_c += [pd.read_csv( file_write_nm,
-                            sep=',',  # Use '\t' if your file is tab-delimited
-                            header=0,  # The first row as column names
-                            )]
-        if rm_after_read:
-            os.remove(file_write_nm)
-        
-    return df_read_c       
-
-#==================================================================================================
-#
 #   Paraview Post-Processing Objects
 #
 #==================================================================================================
@@ -532,6 +472,9 @@ class rake:
         """
         Put the data from the Paraview native format to Pandas. Pandas will be more convenient for
             exporting.
+
+        Note that pandas inherently use single dimensional data, and thus may be best used for
+            steady data.
 
         Args:
             coords (list, optional):    The coordinates for the data. Defaults to ['x', 'y', 'z'].

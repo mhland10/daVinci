@@ -24,7 +24,7 @@ Version     Date        Description
 
 import numpy as np
 import cupy as cp
-
+import pywt
 from numba import jit, prange
 
 ###############################################################################
@@ -231,7 +231,7 @@ def fourierTransform1D( data , dt = 1.0 , N = None , fft_method = 'normal' ,
 
 ###############################################################################
 #
-# Data Objects
+#   Spectral Data Objects
 #
 ###############################################################################
 
@@ -384,6 +384,72 @@ class SpectralData():
                 fft_axis_length = np.shape( cls.fourier_data[v] )[0]
                 corr_raw = np.roll( np.fft.irfft( cls.fourier_data[v] * np.conj( cls.fourier_data[w] ) , axis=0 ) , ifft_len//2 , axis = -1 ).astype( cls.precision )
                 cls.correlation[i,j,...] = corr_raw / np.max( corr_raw[(ifft_len//2-2):(ifft_len//2+2)] , axis=0 )
+
+class WaveletData():
+    """
+        This object contains all the algorithm necessary to perform the functions that pertain to 
+    the wavelet transform.
+
+    """
+    def __init__(self, data, N_dims=1):
+        """
+            Initialize the WaveletData object
+
+        Args:
+            data (float):   The dictionary of the Numpy matrices of data.
+
+            N_dims (int, optional): The number of dimensions that will be used in the wavelet 
+                                        transform. Defaults to 1.
+
+                                    Note: N_dims>2 not currently implemented
+
+        """
+        
+
+        # Store the data
+        self.data = data
+
+        # Store the number of dimensions
+        self.N_dims = N_dims
+
+    def waveletTransform(cls, families, keys=None ):
+        """
+            Perform the wavelet transform 
+
+        Args:
+            families (string):  The list of families of the wavelets that will be used in the
+                                    transform. Not case sensitive. Use pywt.wavelist() to find
+                                    available options.
+
+            keys (string, optional):    The list of keys to get the data over. If None, the 
+                                            default, is given, then it will revert to the keys in
+                                            cls.data.
+
+        """
+        cls.coeffs = {}
+
+        if not keys:
+            keys = cls.data.keys()
+
+        for f in families:
+            coeffs_hold = {}
+            print(f"Running for wavelet family {f}")
+            for d in keys:
+                print(f"\tTranforming for key {d}")
+                if cls.N_dims==1:
+                    coeffs_hold[d] = pywt.dwt(cls.data[d], f)
+                elif cls.N_dims==2:
+                    coeffs_hold[d] = pywt.dwt2(cls.data[d], f)
+                else:
+                    raise ValueError("Too many dimensions requested")
+            cls.coeffs[f] = coeffs_hold
+                
+
+#==================================================================================================
+#
+#   PCA Objects
+#
+#==================================================================================================
                 
 class Decomposition():
     
