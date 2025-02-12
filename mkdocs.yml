@@ -1,0 +1,19 @@
+site_name: daVinci Documentation
+theme:
+  name: material
+
+nav:
+  - Home: index.md
+  - Getting Started: getting_started.md
+  - Methodology: methodology.md
+  - Examples: examples/example1.ipynb
+
+plugins:
+  - search
+  - mkdocs-jupyter   # Enables Jupyter notebook rendering
+  - bibtex:          # Enables citations if needed
+      bib_file: "docs/references.bib"
+
+markdown_extensions:
+  - pymdownx.arithmatex  # Supports math rendering
+  - pymdownx.superfences  # Supports code blocks
