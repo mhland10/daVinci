@@ -17,17 +17,28 @@ So, with all that said, here:
 ## Topics
 
 **Scientific Data Reading**
+
 - Sources
 - File Storage
 
 **Computer Vision and Feature Recognition**
-- Edge Detection
+
+- [Edge Detection](topics/edge_detection.md)
 
 **Data Transformations**
+
 - Interpolation
 - Spectral Methods
 - Multiresolution Methods
 - Prinicipal Component Analysis
+
+## Libraries
+
+transform_lib
+
+finance
+
+sciDataRead
 
 
 ## Editing the Documentation
