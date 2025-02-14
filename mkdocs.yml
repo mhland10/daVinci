@@ -6,16 +6,21 @@ theme:
 
 nav:
   - Home: index.md
-  - Getting Started: getting_started.md
-  - Methodology: methodology.md
-  - Examples: examples/example1.ipynb
 
 plugins:
   - search
-  - mkdocs-jupyter   # Enables Jupyter notebook rendering
-  - bibtex:          # Enables citations if needed
+  - mkdocs-jupyter
+  - bibtex:
       bib_file: "docs/references.bib"
 
+
 markdown_extensions:
-  - pymdownx.arithmatex  # Supports math rendering
+  - pymdownx.arithmatex:
+      generic: true
   - pymdownx.superfences  # Supports code blocks
+
+eextra_javascript:
+  - docs/mathjax.js
+  - https://cdnjs.cloudflare.com/ajax/libs/MathJax/2.7.7/MathJax.js?config=TeX-MML-AM_CHTML
+
+

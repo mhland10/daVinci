@@ -104,7 +104,7 @@ class rake:
         # Set coordinate change variable to track if the coordinate change of the rake has occured
         self.coord_change=False                
 
-    def paraviewDataRead( cls ):
+    def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"] ):
         """
         This method reads the data using the Paraview engine and stores the data in the rake object
             in a dictionary.
@@ -114,12 +114,16 @@ class rake:
         import paraview.simple as pasi
         import vtk
 
+        os.chdir( working_dir )
+
         # If the file format is inferred, find what it is
         if cls.file_format is None:
             ext = os.path.splitext(datafile)[-1].lower()
             if ext == ".vtk":
+                print("VTK file format detected.")
                 cls.file_format = "vtk"
             elif ext == ".h5":
+                print("H5 file format detected.")
                 cls.file_format = "h5"
             else:
                 raise ValueError(f"Unsupported file format: {ext}")
@@ -134,7 +138,7 @@ class rake:
             data = pasi.CONVERGECFDReader(FileName=cls.file_list[0])
         else:
             raise ValueError(f"Unsupported file format:\t{cls.file_format}")
-        print("Available data attributes:\t"+str(dir(data)))
+        #print("Available data attributes:\t"+str(dir(data)))
 
         # Get available time steps
         cls.time_steps = data.TimestepValues
@@ -173,7 +177,7 @@ class rake:
         resample = pasi.ResampleWithDataset()
         resample.SourceDataArrays = [data]
         resample.DestinationMesh = programmableSource
-        print("Resample attributes:\t"+str(dir(resample)))
+        #print("Resample attributes:\t"+str(dir(resample)))
         pasi.UpdatePipeline()
         resampled_output = pasi.servermanager.Fetch(resample)
         point_data = resampled_output.GetPointData()
@@ -201,11 +205,27 @@ class rake:
             resampled_output = pasi.servermanager.Fetch(resample)
             point_data = resampled_output.GetPointData()
 
+
             # Extract data for each variable and store it
             for header in cls.array_headers:
                 array = point_data.GetArray(header)
                 if array:
-                    cls.data_dict[header].append([array.GetValue(i) for i in range(array.GetNumberOfTuples())])
+                    print(f"Array {header} has {array.GetNumberOfComponents()} components and {array.GetNumberOfTuples()} tuples")
+                    # Check if the array is a vector (e.g., velocity)
+                    if array.GetNumberOfComponents() == 3:
+                        for i in range(3):
+                            component_header = f"{header}:{coords[i]}"
+                            # Initialize the key in cls.data_dict if it doesn't exist
+                            if component_header not in cls.data_dict:
+                                cls.data_dict[component_header] = []
+                            cls.data_dict[component_header].append([array.GetComponent(j, i) for j in range(array.GetNumberOfTuples())])
+                    else:
+                        cls.data_dict[header].append([array.GetValue(i) for i in range(array.GetNumberOfTuples())])
+
+            #for header in cls.array_headers:
+            #    array = point_data.GetArray(header)
+            #    if array:
+            #        cls.data_dict[header].append([array.GetValue(i) for i in range(array.GetNumberOfTuples())])
 
             # Clean up for memory efficiency
             pasi.Delete(resample)
@@ -229,6 +249,12 @@ class rake:
         vtk_output_window = vtk.vtkStringOutputWindow()
         vtk.vtkOutputWindow.SetInstance(vtk_output_window)
         vtk.vtkOutputWindow.GetInstance().SetGlobalWarningDisplay(False) 
+
+        # Trim and store data
+        for p in trim_headers:
+            if p in list(cls.data_dict.keys()):
+                cls.data_dict.pop(p)
+        cls.data = cls.data_dict
 
     def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , write=True , rm_after_read=False , mp_method=None , N_cores=None ):
         """
@@ -504,6 +530,23 @@ class rake:
         cls.data_loc = "pandas"
 
         #del cls.resampled_output
+
+    def timeOverride( cls , time_steps ):
+        """
+        This method overrides the time steps in the rake object.
+
+        Args:
+            time_steps (float): The time steps that will be used. Must be the same size as the
+                                    original time steps.
+        """
+
+        if len( np.shape( time_steps ) ) > 1:
+            raise ValueError("Time steps must be a single dimensional array.")
+        
+        if len( time_steps ) != len( cls.time_steps ):
+            raise ValueError("Time steps must be the same size as the original time steps.")
+
+        cls.time_steps = time_steps
 
     def coordinateChange( cls , coord_tol=1e-9 , nDimensions=2 , fix_blanks=False , rot_axis_val=1 ):
         """
