@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.18.1: http://docutils.sourceforge.net/" />
+
+    <title>fluids module &#8212; Python  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=12dfc556" />
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="module-fluids">
+<span id="fluids-module"></span><h1>fluids module<a class="headerlink" href="#module-fluids" title="Link to this heading">¶</a></h1>
+<p>fluids</p>
+<p>&#64;author:    Matthew Holland
+&#64;email:     <a class="reference external" href="mailto:matthew&#46;holland&#37;&#52;&#48;my&#46;utsa&#46;edu">matthew<span>&#46;</span>holland<span>&#64;</span>my<span>&#46;</span>utsa<span>&#46;</span>edu</a>
+&#64;date:      2025/02/17
+&#64;version:   0.0</p>
+<blockquote>
+<div><p>This module contains functions for fluid properties and calculations. This can span a variety</p>
+</div></blockquote>
+<p>of flow regimes.</p>
+<p>Version Date        Author              Changes</p>
+<p>0.0     2025/02/17  Matthew Holland     Initial version of module</p>
+<dl class="py class">
+<dt class="sig sig-object py" id="fluids.compressibleGas">
+<em class="property"><span class="pre">class</span><span class="w"> </span></em><span class="sig-prename descclassname"><span class="pre">fluids.</span></span><span class="sig-name descname"><span class="pre">compressibleGas</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">dims</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">['t',</span> <span class="pre">'x']</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#fluids.compressibleGas" title="Link to this definition">¶</a></dt>
+<dd><p>Bases: <code class="xref py py-class docutils literal notranslate"><span class="pre">object</span></code></p>
+<blockquote>
+<div><p>This class contains the attributes and methods that pertain to a compressible gas as it</p>
+</div></blockquote>
+<p>pertains to data post-processing.</p>
+<blockquote>
+<div><p>The general idea is that the methods will collect data into the aptly named dictionary to</p>
+</div></blockquote>
+<p>manipulate and analyze the data.</p>
+<dl class="py method">
+<dt class="sig sig-object py" id="fluids.compressibleGas.shockTracking">
+<span class="sig-name descname"><span class="pre">shockTracking</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">input_data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_spatial_domain</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">input_time_domain</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">key</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'U:X'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">wt_family</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'bior1.3'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">level</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">-1</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">coeff_index</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">0</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#fluids.compressibleGas.shockTracking" title="Link to this definition">¶</a></dt>
+<dd><blockquote>
+<div><p>In this method, the presence of a shock will be tracked throughout time. The method</p>
+</div></blockquote>
+<p>uses the Discrete Wavelet Transform to track the discontinuity.</p>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>input_data</strong> (<em>dict</em>) – <p>The data to be analyzed. Stored as a dictionary. Data arrays
+must be stored in numpy arrays in the fomrat of:</p>
+<p>[t,x,y,z]</p>
+</p></li>
+<li><p><strong>input_spatial_domain</strong> (<em>float</em>) – <p>The spatial domain of the data in the shape 3xN. The
+data must take the format of:</p>
+<p>[x,y,z]</p>
+</p></li>
+<li><p><strong>input_time_domain</strong> (<em>float</em>) – The time domain of the data. This is a 1D array of time.</p></li>
+<li><p><strong>key</strong> (<em>str</em><em>, </em><em>optional</em>) – The key of the data that will be used to track the shock.
+Defaults to “U:X”.</p></li>
+<li><p><strong>wt_family</strong> (<em>str</em><em>, </em><em>optional</em>) – <dl class="simple">
+<dt>The wavelet family that will find the shock. In general, it</dt><dd><p>is recommended to stick the default, and if another is
+necessary, then one should select an odd wavelet that
+pywavelets has access to. Defaults to “bior1.3”.
+Available wavelets are available at:</p>
+</dd>
+</dl>
+<p><a class="reference external" href="https://pywavelets.readthedocs.io/en/latest/ref/2d-dwt-and-idwt.html">https://pywavelets.readthedocs.io/en/latest/ref/2d-dwt-and-idwt.html</a></p>
+</p></li>
+<li><p><strong>level</strong> (<em>int</em><em>, </em><em>optional</em>) – The level of the wavelet transform that the shock will be
+tracked on. Defaults to -1.</p></li>
+</ul>
+</dd>
+</dl>
+</dd></dl>
+
+</dd></dl>
+
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">Python</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Table of Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="transform.html">transform module</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 7.3.7</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 0.7.16</a>
+      
+      |
+      <a href="../../_sources/source/lib/fluids.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

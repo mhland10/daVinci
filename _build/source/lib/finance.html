@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+
+<html lang="en" data-content_root="../../">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" /><meta name="generator" content="Docutils 0.18.1: http://docutils.sourceforge.net/" />
+
+    <title>finance module &#8212; Python  documentation</title>
+    <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=5ecbeea2" />
+    <link rel="stylesheet" type="text/css" href="../../_static/alabaster.css?v=12dfc556" />
+    <script src="../../_static/documentation_options.js?v=5929fcd5"></script>
+    <script src="../../_static/doctools.js?v=9a2dae69"></script>
+    <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" />
+   
+  <link rel="stylesheet" href="../../_static/custom.css" type="text/css" />
+  
+
+  
+  
+
+  </head><body>
+  
+
+    <div class="document">
+      <div class="documentwrapper">
+        <div class="bodywrapper">
+          
+
+          <div class="body" role="main">
+            
+  <section id="module-finance">
+<span id="finance-module"></span><h1>finance module<a class="headerlink" href="#module-finance" title="Link to this heading">¶</a></h1>
+<p>finance.py - Library for financial calculations</p>
+<p>&#64;author:    Matthew Holland</p>
+<p>This module contains all the objects &amp; functions for financial data.</p>
+<dl class="py function">
+<dt class="sig sig-object py" id="finance.correlation_1D">
+<span class="sig-prename descclassname"><span class="pre">finance.</span></span><span class="sig-name descname"><span class="pre">correlation_1D</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">u_data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_data</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#finance.correlation_1D" title="Link to this definition">¶</a></dt>
+<dd><dl class="simple">
+<dt>Calculates the correlation along the ONLY axis (axis 0) of “u_data” and</dt><dd><p>“v_data” and returns the correlation between the two.</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>u_data</strong> (<em>The 1D array</em><em> of </em><em>the u data.</em>)</p></li>
+<li><p><strong>v_data</strong> (<em>The 1D array</em><em> of </em><em>the v data.</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>correlation_data</strong></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The correlation between the two sets of data.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="finance.correlation_ND">
+<span class="sig-prename descclassname"><span class="pre">finance.</span></span><span class="sig-name descname"><span class="pre">correlation_ND</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">u_data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">v_data</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#finance.correlation_ND" title="Link to this definition">¶</a></dt>
+<dd><dl class="simple">
+<dt>Calculates the correlation along the first axis (axis 0) of “u_data” and</dt><dd><p>“v_data” and returns the correlation between the two.</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>u_data</strong> (<em>The ND matrix</em><em> of </em><em>the u data. Note that the axis to take the</em>) – correlation over must be axis 0.</p></li>
+<li><p><strong>v_data</strong> (<em>The ND matrix</em><em> of </em><em>the v data. Note that the axis to take the</em>) – correlation over must be axis 0.</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>correlation_data</strong></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The correlation between the two sets of data.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="finance.price_velocity">
+<span class="sig-prename descclassname"><span class="pre">finance.</span></span><span class="sig-name descname"><span class="pre">price_velocity</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">ticker_data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">price_time</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'C'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">time_interval</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'daily'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">movingaveragelength</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">50</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">start_date</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'2000-01-01'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">end_date</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'2023-12-31'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#finance.price_velocity" title="Link to this definition">¶</a></dt>
+<dd><dl class="simple">
+<dt>This function calculates the velocity, or time gradient, of the price for</dt><dd><p>the input ticker symbol. There are two forms of the velocity. The first
+is the raw velocity. The second is the velocity normalized to the
+moving average to compensate for long-term changes over time.</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>ticker_data</strong> (<em>The string</em><em> of </em><em>the ticker symbol.</em>)</p></li>
+<li><p><strong>**price_time</strong> (<em>Where in the market time the price data will be considered</em>) – <dl class="simple">
+<dt>from. There are four input characters that define the</dt><dd><p>price:</p>
+</dd>
+</dl>
+<ul>
+<li><p>’O’ :     Open price</p></li>
+<li><p>’C’ :     Close price</p></li>
+<li><p>’L’ :     Low price</p></li>
+<li><p>’H’ :     High price</p></li>
+<li><p>’A’ :     Adjusted close price</p></li>
+</ul>
+<dl class="simple">
+<dt>From these characters, there are the following valid</dt><dd><p>options as to how the price is formulated:</p>
+</dd>
+</dl>
+<ul>
+<li><p>’X’ :     Single point price</p></li>
+<li><dl class="simple">
+<dt>’XX’<span class="classifier">Two points that are averaged together to form</span></dt><dd><p>the price</p>
+</dd>
+</dl>
+</li>
+<li><dl class="simple">
+<dt>’O-C’<span class="classifier">Forms the velocity of the price by only the</span></dt><dd><p>difference from open to close.</p>
+</dd>
+</dl>
+</li>
+<li><p>’OCHL’ :  The average of the O, C, H, and L prices.</p></li>
+</ul>
+<p>Not case sensitive. The default is ‘C’.</p>
+</p></li>
+<li><p><strong>**time_interval</strong> (<em>The interval length in time</em><em> of </em><em>the data. Not case</em>) – <p>sensitive. The valid values are:</p>
+<p>’daily’ :   Daily intervals</p>
+<p>’monthly’ : Monthly intervals</p>
+<p>’weekly’ :  Weekly intervals</p>
+<dl>
+<dt>’XX-minute’<span class="classifier">Intervals by minute. The valid values of</span></dt><dd><blockquote>
+<div><p>XX are:</p>
+</div></blockquote>
+<ul>
+<li><p>01</p></li>
+<li><p>05</p></li>
+<li><p>30</p></li>
+</ul>
+</dd>
+<dt>’XX-hour’<span class="classifier">Intervals by hour. The valid values of XX</span></dt><dd><blockquote>
+<div><p>are:</p>
+</div></blockquote>
+<ul>
+<li><p>01</p></li>
+<li><p>02</p></li>
+</ul>
+</dd>
+<dt>The default value is ‘daily’. One should be very careful</dt><dd><p>using minute or hourly data due to the size.</p>
+</dd>
+</dl>
+</p></li>
+<li><p><strong>***movingaveragelength</strong> (<em>The length</em><em> of </em><em>the moving avearge to be</em>) – <p>normalized to.</p>
+<p>The default is 50.</p>
+</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><ul class="simple">
+<li><p><strong>U</strong> (<em>The velocity of the price.</em>)</p></li>
+<li><p><strong>U_normalized</strong> (<em>The velocity of the price as normalized to the moving</em>) – average.</p></li>
+<li><p><strong>delta_d_length</strong> (<em>The length of the original data that was lost in the</em>) – moving average calculation.</p></li>
+</ul>
+</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="finance.simpleMovingAverage">
+<span class="sig-prename descclassname"><span class="pre">finance.</span></span><span class="sig-name descname"><span class="pre">simpleMovingAverage</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">price_data</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">movingaveragelength</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#finance.simpleMovingAverage" title="Link to this definition">¶</a></dt>
+<dd><dl class="simple">
+<dt>This function provides the simple moving average data for the input price</dt><dd><p>data and moving average length.</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>price_data</strong> (<em>The input price data.</em>)</p></li>
+<li><p><strong>movingaveragelength</strong> (<em>The term</em><em> of </em><em>the moving average.</em>)</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>SMA_price_data</strong></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The SMA price data.</p>
+</dd>
+</dl>
+</dd></dl>
+
+<dl class="py function">
+<dt class="sig sig-object py" id="finance.ticker_datapull">
+<span class="sig-prename descclassname"><span class="pre">finance.</span></span><span class="sig-name descname"><span class="pre">ticker_datapull</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="n"><span class="pre">tickerstr</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">st_date</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'2000-01-01'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">en_date</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'2023-12-31'</span></span></em>, <em class="sig-param"><span class="n"><span class="pre">interval_l</span></span><span class="o"><span class="pre">=</span></span><span class="default_value"><span class="pre">'daily'</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#finance.ticker_datapull" title="Link to this definition">¶</a></dt>
+<dd><dl class="simple">
+<dt>This function pulls the data for the input ticker symbol for the input</dt><dd><p>dates.</p>
+</dd>
+</dl>
+<dl class="field-list simple">
+<dt class="field-odd">Parameters<span class="colon">:</span></dt>
+<dd class="field-odd"><ul class="simple">
+<li><p><strong>tickerstr</strong> (<em>The string</em><em> of </em><em>the ticker symbol. Not case sensitive.</em>)</p></li>
+<li><p><strong>**st_date</strong> (<em>The string</em><em> of </em><em>the date where the data will start. Must be</em>) – <p>in the format YYYY-MM-DD.</p>
+<p>The default is ‘2000-01-01’.</p>
+</p></li>
+<li><p><strong>**en_date</strong> (<em>The string</em><em> of </em><em>the date where the data will end. Must be in</em>) – <p>the format YYYY-MM-DD.</p>
+<p>The default is ‘2023-12-31’.</p>
+</p></li>
+<li><p><strong>**interval_l</strong> (<em>The interval length in time</em><em> of </em><em>the data. Not case</em>) – <p>sensitive. The valid values are:</p>
+<p>’daily’ :   Daily intervals</p>
+<p>’monthly’ : Monthly intervals</p>
+<p>’weekly’ :  Weekly intervals</p>
+<dl>
+<dt>’XX-minute’<span class="classifier">Intervals by minute. The valid values of</span></dt><dd><blockquote>
+<div><p>XX are:</p>
+</div></blockquote>
+<ul>
+<li><p>01</p></li>
+<li><p>05</p></li>
+<li><p>30</p></li>
+</ul>
+</dd>
+<dt>’XX-hour’<span class="classifier">Intervals by hour. The valid values of XX</span></dt><dd><blockquote>
+<div><p>are:</p>
+</div></blockquote>
+<ul>
+<li><p>01</p></li>
+<li><p>02</p></li>
+</ul>
+</dd>
+<dt>The default value is ‘daily’. One should be very careful</dt><dd><p>using minute or hourly data due to the size.</p>
+</dd>
+</dl>
+</p></li>
+</ul>
+</dd>
+<dt class="field-even">Returns<span class="colon">:</span></dt>
+<dd class="field-even"><p><strong>data</strong></p>
+</dd>
+<dt class="field-odd">Return type<span class="colon">:</span></dt>
+<dd class="field-odd"><p>The list of the dataframe of the input ticker symbol.</p>
+</dd>
+</dl>
+</dd></dl>
+
+</section>
+
+
+          </div>
+          
+        </div>
+      </div>
+      <div class="sphinxsidebar" role="navigation" aria-label="main navigation">
+        <div class="sphinxsidebarwrapper">
+<h1 class="logo"><a href="../../index.html">Python</a></h1>
+
+
+
+
+
+
+
+
+<h3>Navigation</h3>
+<p class="caption" role="heading"><span class="caption-text">Table of Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="transform.html">transform module</a></li>
+</ul>
+
+<div class="relations">
+<h3>Related Topics</h3>
+<ul>
+  <li><a href="../../index.html">Documentation overview</a><ul>
+  </ul></li>
+</ul>
+</div>
+<search id="searchbox" style="display: none" role="search">
+  <h3 id="searchlabel">Quick search</h3>
+    <div class="searchformwrapper">
+    <form class="search" action="../../search.html" method="get">
+      <input type="text" name="q" aria-labelledby="searchlabel" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <input type="submit" value="Go" />
+    </form>
+    </div>
+</search>
+<script>document.getElementById('searchbox').style.display = "block"</script>
+
+
+
+
+
+
+
+
+        </div>
+      </div>
+      <div class="clearer"></div>
+    </div>
+    <div class="footer">
+      &#169;.
+      
+      |
+      Powered by <a href="https://www.sphinx-doc.org/">Sphinx 7.3.7</a>
+      &amp; <a href="https://alabaster.readthedocs.io">Alabaster 0.7.16</a>
+      
+      |
+      <a href="../../_sources/source/lib/finance.rst.txt"
+          rel="nofollow">Page source</a>
+    </div>
+
+    
+
+    
+  </body>
+</html>

@@ -391,7 +391,7 @@ class WaveletData():
     the wavelet transform.
 
     """
-    def __init__(self, data, N_dims=1):
+    def __init__(self, data, N_dims=1, layer_header=None, wavelet_family='db1' ):
         """
             Initialize the WaveletData object
 
@@ -403,6 +403,15 @@ class WaveletData():
 
                                     Note: N_dims>2 not currently implemented
 
+            layer_header (string, optional):   The header of the layer that will be used in the
+                                                calculation that determines the number of layers
+                                                the DWT can produce. Defaults to None, which uses
+                                                the first key.
+
+            wavelet_family (string, optional): The family of the wavelet that will be used in the
+                                                calculation of the maximum number of levels.
+                                                Defaults to 'db1'.
+
         """
         
 
@@ -412,7 +421,13 @@ class WaveletData():
         # Store the number of dimensions
         self.N_dims = N_dims
 
-    def waveletTransform(cls, families, keys=None ):
+        # Find and store the number of levels
+        if not layer_header:
+            self.max_levels = pywt.dwtn_max_level(self.data[list(data.keys())[0]].shape, pywt.Wavelet(wavelet_family))
+        else:
+            self.max_levels = pywt.dwtn_max_level(self.data[layer_header].shape, pywt.Wavelet(wavelet_family))
+
+    def waveletTransform(cls, families, keys=None, level=None):
         """
             Perform the wavelet transform 
 
@@ -426,20 +441,35 @@ class WaveletData():
                                             cls.data.
 
         """
+        # Initialize the coefficients dictionary
         cls.coeffs = {}
 
+        # Initialize the levels to decompose on
+        if not level:
+            level = cls.max_levels
+        print(f"Transforming over {level} levels")
+
+        # Find the keys to use if not given
         if not keys:
             keys = cls.data.keys()
+        print(f"Transforming for {keys}")
 
+        # Perform the wavelet transform by family of wavelets, then keys, then dimensions
         for f in families:
             coeffs_hold = {}
             print(f"Running for wavelet family {f}")
             for d in keys:
                 print(f"\tTranforming for key {d}")
                 if cls.N_dims==1:
-                    coeffs_hold[d] = pywt.dwt(cls.data[d], f)
+                    if level==1:
+                        coeffs_hold[d] = pywt.dwt(cls.data[d], f)
+                    else:
+                        coeffs_hold[d] = pywt.wavedec(cls.data[d], f, level=level)
                 elif cls.N_dims==2:
-                    coeffs_hold[d] = pywt.dwt2(cls.data[d], f)
+                    if level==1:
+                        coeffs_hold[d] = pywt.dwt2(cls.data[d], f)
+                    else:  
+                        coeffs_hold[d] = pywt.wavedec2(cls.data[d], f, level=level)
                 else:
                     raise ValueError("Too many dimensions requested")
             cls.coeffs[f] = coeffs_hold

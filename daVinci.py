@@ -43,8 +43,9 @@ lib_dir = os.path.join(script_dir, 'lib')
 sys.path.append(lib_dir)
 
 #from finance import *
-from transform_lib import *
+from transform import *
 from sciDataRead import *
+from fluids import *
 
 
 ###############################################################################

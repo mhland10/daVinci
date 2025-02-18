@@ -6,6 +6,8 @@ theme:
 
 nav:
   - Home: index.md
+  - Sphinx Docs:
+    - 'sphinx_docs/index.html'
 
 plugins:
   - search

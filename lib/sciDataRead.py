@@ -24,6 +24,8 @@ Version Date        Description
 
 0.0     2025/01/29  Original Version
 
+0.1     2025/02/17  Added the dataReader object to the file so that rake inherits from it.
+
 """
 
 #==================================================================================================
@@ -40,22 +42,20 @@ from natsort import natsorted
 
 #==================================================================================================
 #
-#   Paraview Post-Processing Objects
+#   Post-Processing Objects
 #
 #==================================================================================================
 
-class rake:
+class dataReader:
     """
-    This object is a rake of points that allows the user to draw data from the datafiles to draw
-        the wanted data.
-    
-    """
+        This object is a general data reader that allows the user to draw data from the datafiles 
+    the object is initialized with. This object will be inherited by the specific data readers. to
+    use its functionality.
 
-    def __init__( self , points , datafile , file_format="vtk" ):
+    """
+    def __init__(self, points, datafile, file_format="vtk" ):
         """
-        Initialize the rake object according to the inputs to the file.
-
-        The data will be stored in a Paraview-native format.
+        Initialize the dataReader object according to the inputs to the file.
 
         Args:
 
@@ -80,11 +80,8 @@ class rake:
 
             ext_points [list]:  The externally defined points from "points" re-formatted into a
                                     Paraview-friendly format.
-
-            
         
         """
-
         # Check the number of dimensions
         if not len( points ) == 3:
             raise ValueError( "Not enough dimensions in points. Make sure three (3) dimensions are present.")
@@ -101,13 +98,21 @@ class rake:
         self.ext_points = [[points[0][i], points[1][i], points[2][i]] for i in range(len(points[0]))]
         self.points = np.array( self.ext_points )
 
-        # Set coordinate change variable to track if the coordinate change of the rake has occured
-        self.coord_change=False                
-
     def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"] ):
         """
         This method reads the data using the Paraview engine and stores the data in the rake object
             in a dictionary.
+
+        Args:
+        
+            working_dir (string):   The path to the working directory write/read the temporary
+                                        files used to get the data in/out.
+
+            trim_headers (list, optional):  The headers that will be trimmed from the data. Defaults
+                                                to ["vtkValidPointMask"].
+
+            coords (list, optional):    The coordinates that will be used in the data. Defaults to
+                                            ["X","Y","Z"].
 
         """
 
@@ -255,7 +260,7 @@ class rake:
             if p in list(cls.data_dict.keys()):
                 cls.data_dict.pop(p)
         cls.data = cls.data_dict
-
+        
     def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , write=True , rm_after_read=False , mp_method=None , N_cores=None ):
         """
         This method reads the data using the Converge engine and stores the data in the rake object
@@ -414,7 +419,7 @@ class rake:
                 
         # Return to original directory
         os.chdir(og_dir)
-        
+
     def hdf5Write( cls , filename , working_dir ):
         """
         This method writes cls.data to an *.h5 file.
@@ -460,7 +465,7 @@ class rake:
                     cls.time_steps = f[k][()]
                 else:
                     cls.data[k] = f[k][()]
-
+    
     def dataToDictionary( cls ):
         """
         Transfers the data from the Paraview-native format to a Python-native format of a
@@ -494,13 +499,34 @@ class rake:
 
         cls.data_loc = "dictionary"
 
+    def timeOverride( cls , time_steps ):
+        """
+        This method overrides the time steps in the rake object.
+
+        Args:
+            time_steps (float): The time steps that will be used. Must be the same size as the
+                                    original time steps.
+        """
+
+        if len( np.shape( time_steps ) ) > 1:
+            raise ValueError("Time steps must be a single dimensional array.")
+        
+        if len( time_steps ) != len( cls.time_steps ):
+            raise ValueError("Time steps must be the same size as the original time steps.")
+
+        cls.time_steps = time_steps
+
+    def closeout( cls ):
+
+        del cls.resampled_output
+
     def dataToPandas( cls , coords = ['x', 'y', 'z'] ):
         """
         Put the data from the Paraview native format to Pandas. Pandas will be more convenient for
             exporting.
 
         Note that pandas inherently use single dimensional data, and thus may be best used for
-            steady data.
+            steady data, and data that is unstructured or 1D.
 
         Args:
             coords (list, optional):    The coordinates for the data. Defaults to ['x', 'y', 'z'].
@@ -531,22 +557,69 @@ class rake:
 
         #del cls.resampled_output
 
-    def timeOverride( cls , time_steps ):
+    
+
+class rake(dataReader):
+    """
+    This object is a rake of points that allows the user to draw data from the datafiles to draw
+        the wanted data.
+    
+    """
+    def __init__( self , points , datafile , file_format="vtk" ):
         """
-        This method overrides the time steps in the rake object.
+        Initialize the rake object according to the inputs to the file.
+
+        The data will be stored in a Paraview-native format.
 
         Args:
-            time_steps (float): The time steps that will be used. Must be the same size as the
-                                    original time steps.
+
+            points ((arrays/lists)):    The tuple of arrays or lists that contain the points of
+                                            the rakes. The order will be (x, y, z). All three
+                                            dimensions are required.
+
+            datafile (string):  The datafile with the CFD data.
+
+            file_format (string, optional): The file format that will be used. The valid options 
+                                                are:
+
+                                            - *"vtk" - The default *.vtk output as OpenFOAM 
+                                                        produces
+                                            
+                                            - "h5" - The *.h5 output that is defined by the 
+
+                                            - None - Take the file format from the "datafile"
+                                                        argument.
+
+        Attributes:
+
+            ext_points [list]:  The externally defined points from "points" re-formatted into a
+                                    Paraview-friendly format.
+        
         """
 
-        if len( np.shape( time_steps ) ) > 1:
-            raise ValueError("Time steps must be a single dimensional array.")
-        
-        if len( time_steps ) != len( cls.time_steps ):
-            raise ValueError("Time steps must be the same size as the original time steps.")
+        # Insert inherited class data
+        super().__init__( points , datafile , file_format )
 
-        cls.time_steps = time_steps
+        """
+        # Check the number of dimensions
+        if not len( points ) == 3:
+            raise ValueError( "Not enough dimensions in points. Make sure three (3) dimensions are present.")
+        
+        # Expand wildcard pattern into actual file list with natural sorting
+        self.datafile = datafile
+        self.file_list = natsorted(glob.glob(datafile))  # Use natsorted instead of sorted
+        print("File list:\t"+str(self.file_list))
+
+        # Store the file format
+        self.file_format = file_format
+
+        # Store the points on the rake
+        self.ext_points = [[points[0][i], points[1][i], points[2][i]] for i in range(len(points[0]))]
+        self.points = np.array( self.ext_points )
+        """
+
+        # Set coordinate change variable to track if the coordinate change of the rake has occured
+        self.coord_change=False                
 
     def coordinateChange( cls , coord_tol=1e-9 , nDimensions=2 , fix_blanks=False , rot_axis_val=1 ):
         """
@@ -601,8 +674,6 @@ class rake:
                 
                 cls.normal_vector[:,np.isnan(cls.normal_vector)]=cls.normal_vector[np.isnan(cls.normal_vector)]
                 cls.binormal_vector[np.isnan(cls.binormal_vector)]=0
-
-
 
             #
             # Transform velocity
@@ -794,117 +865,4 @@ class rake:
 
         print("Hello there")
 
-    def closeout( cls ):
-
-        del cls.resampled_output
-
-"""
-        elif mp_method.lower()=="mpi":
-
-            print("**Under construction**")
-
-            from mpi4py import MPI
-
-            comm = MPI.COMM_WORLD
-            rank = comm.Get_rank()
-            size = comm.Get_size()
-            
-            print(f"Running on {size} ranks...")
-
-            # Distribute time steps to processes
-            time_steps_per_rank = len(cls.time_steps) // size
-            print(f"There are {time_steps_per_rank} time steps per rank.")
-            cls.time_indices = np.arange(len(cls.time_steps))
-            cls.time_steps_chunks = np.array_split( cls.time_steps , time_steps_per_rank )
-            cls.time_index_chunks = np.array_split( cls.time_indices , time_steps_per_rank )
-            print(f"Time Step chunks: {cls.time_index_chunks}")
-            print(f"First time step chunk: {cls.time_index_chunks[0]}")
-
-            # Set up dictionary to receive the rank data
-            rank_data = {}
-
-            # Iterate over time steps assigned to the current rank
-            for t_i in cls.time_index_chunks[rank]:
-                t = cls.time_steps[int(t_i)]
-
-                # Save the data to a *.csv for each time step
-                os.chdir(working_dir)
-                file_write_nm = working_dir + "\\" + data_prefix + str(t_i) + ".csv"
-                
-                if overwrite or not os.path.exists(file_write_nm):
-                    print(f"Rank {rank} changing directory to {os.getcwd()}\n to write {file_write_nm}")
-                    pasi.SaveData(
-                        file_write_nm, 
-                        proxy=cls.coordinates1,
-                        WriteTimeSteps=t_i, 
-                        WriteTimeStepsSeparately=0,
-                        Filenamesuffix='_%d', 
-                        ChooseArraysToWrite=0, 
-                        PointDataArrays=[],
-                        CellDataArrays=cls.source.CellData.keys() + ["CellCenters"], 
-                        FieldDataArrays=[], 
-                        VertexDataArrays=[], 
-                        EdgeDataArrays=[], 
-                        RowDataArrays=[], 
-                        Precision=sig_figs, 
-                        UseStringDelimiter=1, 
-                        UseScientificNotation=1, 
-                        FieldAssociation='Cell Data', 
-                        AddMetaData=0, 
-                        AddTimeStep=0, 
-                        AddTime=0
-                    )
-
-                # Pull data into DataFrame
-                cls.df_read = pd.read_csv(file_write_nm, sep=',', header=0)
-
-                if rm_after_read:
-                    os.remove(file_write_nm)
-
-                # Separate into coordinates and data
-                data_columns = [col for col in cls.df_read.columns if not col.startswith('CellCenters')]
-                cls.df_data = cls.df_read[data_columns]
-                coord_columns = [col for col in cls.df_read.columns if col.startswith('CellCenters')]
-                cls.df_coord = cls.df_read[coord_columns]
-
-                # Set up coordinates and rake coordinates as numpy arrays
-                cls.coordinates = np.zeros((len(cls.df_coord[cls.df_coord.keys()[0]].to_numpy()), N_dims))
-                for i in range(N_dims):
-                    cls.coordinates[:, i] = cls.df_coord[cls.df_coord.keys()[i]].to_numpy()
-
-                cls.rake_coordinates = np.zeros((np.shape(cls.ext_points)[0], N_dims))
-                for i in range(np.shape(cls.ext_points)[0]):
-                    cls.rake_coordinates[i, :] = cls.ext_points[i][:N_dims]
-
-                # Store data on the current rank
-                rank_data[t_i] = {}
-
-                for i, h in enumerate(cls.df_data.columns):
-                    col_data = cls.df_data[h].to_numpy()
-                    if interpolator.lower() == "rbf":
-                        rank_data[t_i][h] = sint.RBFInterpolator(cls.coordinates, col_data)(cls.rake_coordinates)
-                    elif interpolator.lower() == "ct" and N_dims == 2:
-                        rank_data[t_i][h] = sint.CloughTocher2DInterpolator(cls.coordinates, col_data)(cls.rake_coordinates)
-                    else:
-                        raise ValueError("Invalid interpolator selected.")
-
-            # Gather the data from all ranks to rank 0
-            all_data = comm.gather(rank_data, root=0)
-
-            # Rank 0 combines the results
-            if rank == 0:
-                # Initialize the final data dictionary
-                cls.data = {}
-                
-                for rank_data_chunk in all_data:
-                    for t_i, data in rank_data_chunk.items():
-                        if t_i not in cls.data:
-                            cls.data[t_i] = data
-                        else:
-                            for h, val in data.items():
-                                cls.data[t_i][h] = np.concatenate((cls.data[t_i][h], val))
-
-
-            MPI.Finalize()
-        """
-
+    
