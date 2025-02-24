@@ -60,7 +60,7 @@ class compressibleGas:
         
         print("compressibleGas object created.")
 
-    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0 ):
+    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0, store_wavelet=False ):
         """
             In this method, the presence of a shock will be tracked throughout time. The method
         uses the Discrete Wavelet Transform to track the discontinuity. 
@@ -95,35 +95,38 @@ class compressibleGas:
         """
 
         # Check if the domain allows tracking a shock
-        if 'x' not in cls.dims:
-            raise ValueError("The domain must have an x-axis to track a shock.")
         if cls.N_dims == 1:
             raise ValueError("The domain must have a time or second spatial axis to track a shock.")
 
         # Define the wavelet object that will be used to track the shock
-        shock_wavelet = WaveletData( input_data , N_dims=cls.N_dims, wavelet_family=wt_family )
+        if store_wavelet:
+            cls.shock_wavelet = WaveletData( input_data , N_dims=cls.N_dims, wavelet_family=wt_family )
+            swt = cls.shock_wavelet
+        else:
+            shock_wavelet = WaveletData( input_data , N_dims=cls.N_dims, wavelet_family=wt_family )
+            swt = shock_wavelet
 
         # Perform the wavelet transform on the data with the specified keys
-        shock_wavelet.waveletTransform([wt_family], keys=[key] )
+        swt.waveletTransform([wt_family], keys=[key] )
 
         # Find the index of the shock location on a spatial domain that corresponds to the original 
         # data, but with the shape of the wavelet coefficients
-        cls.shock_loc_indx = np.argmax( np.abs( shock_wavelet.coeffs[wt_family][key][level][coeff_index] ) , axis=-1 )
+        cls.shock_loc_indx = np.argmax( np.abs( swt.coeffs[wt_family][key][level][coeff_index] ) , axis=-1 )
 
         # Set up alternative domain
         cls.shock_loc = []
         if 'x' in cls.dims:
             print(f"Interpolating {input_data[key].shape[1]} points in [{input_spatial_domain[0][0]}, {input_spatial_domain[0][-1]}]")
-            cls.x_pts = np.linspace(input_spatial_domain[0][0], input_spatial_domain[0][-1], shock_wavelet.coeffs[wt_family][key][level][coeff_index].shape[-1] )
+            cls.x_pts = np.linspace(input_spatial_domain[0][0], input_spatial_domain[0][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
             cls.shock_loc += [cls.x_pts[cls.shock_loc_indx]]
         if 'y' in cls.dims:
-            cls.y_pts = np.linspace(input_spatial_domain[1][0], input_spatial_domain[1][-1], shock_wavelet.coeffs[wt_family][key][level][coeff_index].shape[-1] )
+            cls.y_pts = np.linspace(input_spatial_domain[0][0], input_spatial_domain[0][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
             cls.shock_loc += [cls.y_pts[cls.shock_loc_indx]]
         if 'z' in cls.dims:
-            cls.z_pts = np.linspace(input_spatial_domain[2][0], input_spatial_domain[2][-1], shock_wavelet.coeffs[wt_family][key][level][coeff_index].shape[-1] )
+            cls.z_pts = np.linspace(input_spatial_domain[0][0], input_spatial_domain[0][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
             cls.shock_loc += [cls.z_pts[cls.shock_loc_indx]]
         if 't' in cls.dims:
-            cls.t_pts = np.linspace(input_time_domain[0], input_time_domain[-1], shock_wavelet.coeffs[wt_family][key][level][coeff_index].shape[0] )
+            cls.t_pts = np.linspace(input_time_domain[0], input_time_domain[-1], swt.coeffs[wt_family][key][level][coeff_index].shape[0] )
 
         # Calculate the shock velocity
         if 't' in cls.dims:

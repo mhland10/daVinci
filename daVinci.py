@@ -41,6 +41,8 @@ import numpy as np
 script_dir = os.path.dirname(os.path.realpath(__file__))
 lib_dir = os.path.join(script_dir, 'lib')
 sys.path.append(lib_dir)
+data_dir = os.path.join(script_dir, 'data')
+sys.path.append(data_dir)
 
 #from finance import *
 from transform import *

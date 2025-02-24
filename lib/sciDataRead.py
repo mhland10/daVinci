@@ -98,6 +98,9 @@ class dataReader:
         self.ext_points = [[points[0][i], points[1][i], points[2][i]] for i in range(len(points[0]))]
         self.points = np.array( self.ext_points )
 
+        # Set coordinate change variable to track if the coordinate change has occured
+        self.coord_change=False   
+
     def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"] ):
         """
         This method reads the data using the Paraview engine and stores the data in the rake object
@@ -569,8 +572,6 @@ class rake(dataReader):
         """
         Initialize the rake object according to the inputs to the file.
 
-        The data will be stored in a Paraview-native format.
-
         Args:
 
             points ((arrays/lists)):    The tuple of arrays or lists that contain the points of
@@ -600,26 +601,7 @@ class rake(dataReader):
         # Insert inherited class data
         super().__init__( points , datafile , file_format )
 
-        """
-        # Check the number of dimensions
-        if not len( points ) == 3:
-            raise ValueError( "Not enough dimensions in points. Make sure three (3) dimensions are present.")
-        
-        # Expand wildcard pattern into actual file list with natural sorting
-        self.datafile = datafile
-        self.file_list = natsorted(glob.glob(datafile))  # Use natsorted instead of sorted
-        print("File list:\t"+str(self.file_list))
-
-        # Store the file format
-        self.file_format = file_format
-
-        # Store the points on the rake
-        self.ext_points = [[points[0][i], points[1][i], points[2][i]] for i in range(len(points[0]))]
-        self.points = np.array( self.ext_points )
-        """
-
-        # Set coordinate change variable to track if the coordinate change of the rake has occured
-        self.coord_change=False                
+                     
 
     def coordinateChange( cls , coord_tol=1e-9 , nDimensions=2 , fix_blanks=False , rot_axis_val=1 ):
         """
@@ -709,7 +691,6 @@ class rake(dataReader):
             cls.data_df["C_b"] = cls.C_r[2,:]
 
         cls.coord_change=True
-
 
     def flowData( cls , nu , side=None , dataDictionaryFormat="pandas" , x_offset=0 ):
         """
@@ -864,5 +845,49 @@ class rake(dataReader):
             cls.u_fit = np.zeros_like( cls.u )
 
         print("Hello there")
+
+class structuredGrid(dataReader):
+    """
+        In this object, the data will be read via a structured grid. 
+
+        The advantage of this object is that spatial gradients are much easier to calculate this 
+    way.
+
+    """
+
+    def __init__(self, points, datafile, file_format="vtk" ):
+        """
+        Initialize the structured grid object according to the inputs to the file.
+
+        Args:
+            points (float): This is a list/array of the points in the structured grid. The order
+                                will be (X, Y, Z). All three dimension are required. X, Y, and Z 
+                                are the points in a NumPy meshgrid() output-like format.
+
+            datafile (string):  The datafile with the CFD data.
+
+            file_format (string, optional): The file format that will be used. The valid options 
+                                                are:
+
+                                            - *"vtk" - The default *.vtk output as OpenFOAM 
+                                                        produces
+                                            
+                                            - "h5" - The *.h5 output that is defined by the 
+
+                                            - None - Take the file format from the "datafile"
+                                                        argument.
+        """
+
+        # Store the received grid and convert for the dataReader
+        self.points_input = points
+        self.points_shape = np.shape( self.points_input )
+        X_flat = self.points_input[0].flatten
+        Y_flat = self.points_input[1].flatten
+        Z_flat = self.points_input[2].flatten
+
+        # Initialize the dataReader object to inherit
+        super().__init__( [ X_flat, Y_flat, Z_flat ], datafile, file_format )
+
+    
 
     

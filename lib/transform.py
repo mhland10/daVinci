@@ -419,7 +419,10 @@ class WaveletData():
         self.data = data
 
         # Store the number of dimensions
-        self.N_dims = N_dims
+        if not N_dims:
+            self.N_dims=len( np.shape( data[layer_header]) )
+        else:
+            self.N_dims = N_dims
 
         # Find and store the number of levels
         if not layer_header:
@@ -427,7 +430,22 @@ class WaveletData():
         else:
             self.max_levels = pywt.dwtn_max_level(self.data[layer_header].shape, pywt.Wavelet(wavelet_family))
 
-    def waveletTransform(cls, families, keys=None, level=None):
+    def importCoordinates(cls, coordinates, time_steps ):
+        """
+            Import the coordinates of the data 
+
+        Args:
+            coordinates (list/array):   The coordinates of the data in space. Must be in the format
+                                            [x, (?)y, (?)z] where some coordinates may be optional.
+
+            time_steps (list/array):    The time steps that correspond to the data.
+
+        """
+
+        cls.coordinates = coordinates
+        cls.time_steps = time_steps
+
+    def waveletTransform(cls, families, keys=None, level=None, mode="symmetric", stackup="equivalent", stackup_levels=None, t_axis=0, interpolator="linear" ):
         """
             Perform the wavelet transform 
 
@@ -439,6 +457,40 @@ class WaveletData():
             keys (string, optional):    The list of keys to get the data over. If None, the 
                                             default, is given, then it will revert to the keys in
                                             cls.data.
+
+            mode (string, optional):    The padding method that the wavelet transform methods are 
+                                            using. For reference, see:
+
+                                        https://pywavelets.readthedocs.io/en/latest/ref/signal-extension-modes.html#ref-modes
+
+                                        Not case sensitive.
+
+            stackup (string, optional): The way that the different families will be handled. The 
+                                            valid options are:
+
+                                        - *"equivalent", "parallel", "equiv", "p", or "e":
+                                                Each family of wavelets will be treated as at the 
+                                                    same level.
+
+                                        - "heirarchical", "heirarchy", or "h":
+                                                Each family of wavelets will be subtracted from the
+                                                    data as each wavelet is transformed down the 
+                                                    list given to the method.
+
+                                        The default is "equivalent". Not case sensitive.
+
+            stackup_levels (int, optional): The list/array of levels to keep from the DWT 
+                                                coefficients.
+
+            t_axis (int, optional): The axis that defines which axis the time exists on. Default
+                                        value is 0.
+
+            interpolator (string, optional):    The interpolator that will be used if the 
+                                                    heirarchical stackup is used. The valid options
+                                                    are:
+
+                                                - *"linear", "lin", or "l": Linear interpolator
+                                                    that uses Delaunay triangulation.
 
         """
         # Initialize the coefficients dictionary
@@ -454,25 +506,128 @@ class WaveletData():
             keys = cls.data.keys()
         print(f"Transforming for {keys}")
 
-        # Perform the wavelet transform by family of wavelets, then keys, then dimensions
-        for f in families:
-            coeffs_hold = {}
-            print(f"Running for wavelet family {f}")
-            for d in keys:
-                print(f"\tTranforming for key {d}")
-                if cls.N_dims==1:
-                    if level==1:
-                        coeffs_hold[d] = pywt.dwt(cls.data[d], f)
+        # Find the stackup lengths if not given
+        if not stackup_levels:
+            stackup_levels = [1] * len( families )
+
+        # Perform DWT for an equivalent list of wavelets
+        if stackup.lower() in ["equivalent", "parallel", "equiv", "p", "e"]:
+            # Perform the wavelet transform by family of wavelets, then keys, then dimensions
+            for f in families:
+                coeffs_hold = {}
+                print(f"Running for wavelet family {f}")
+                for d in keys:
+                    print(f"\tTranforming for key {d}")
+                    if cls.N_dims==1:
+                        if level==1:
+                            coeffs_hold[d] = pywt.dwt(cls.data[d], f, mode=mode.lower())
+                        else:
+                            coeffs_hold[d] = pywt.wavedec(cls.data[d], f, level=level, mode=mode.lower())
+                    elif cls.N_dims==2:
+                        if level==1:
+                            coeffs_hold[d] = pywt.dwt2(cls.data[d], f, mode=mode.lower())
+                        else:  
+                            coeffs_hold[d] = pywt.wavedec2(cls.data[d], f, level=level, mode=mode.lower())
                     else:
-                        coeffs_hold[d] = pywt.wavedec(cls.data[d], f, level=level)
-                elif cls.N_dims==2:
-                    if level==1:
-                        coeffs_hold[d] = pywt.dwt2(cls.data[d], f)
-                    else:  
-                        coeffs_hold[d] = pywt.wavedec2(cls.data[d], f, level=level)
-                else:
-                    raise ValueError("Too many dimensions requested")
-            cls.coeffs[f] = coeffs_hold
+                        raise ValueError("Too many dimensions requested")
+                cls.coeffs[f] = coeffs_hold
+        
+        elif stackup.lower() in ["heirarchical", "heirarchy", "h"]:
+            # Perform the wavelet transform by family of wavelets, then keys, then dimensions while
+            #   removing preceding wavelet transforms 
+            if not len(families)==len(stackup_levels):
+                raise ValueError("The list of stackup_levels does not match the list of wavelet families. Must be the same length.")
+            
+            # Set up the coordinates that will be used for heirarchical use
+            if not hasattr(cls, "coordinates"):
+                raise ValueError("No coordinates in the wavelet object. Need to run the importCoordinates() method.")
+            else:
+                coords = []
+                if not t_axis==None:
+                    for i in range( len(cls.coordinates)+1 ):
+                        if i==t_axis or (i==len(cls.coordinates) and t_axis==-1):
+                            coords+= [cls.time_steps]
+                        else:
+                            if i>t_axis:
+                                coords+= [cls.coordinates[i-1]]
+                            else:
+                                coords+= [cls.coordinates[i]]
+                cls.coords = coords
+
+            import scipy.interpolate as sint
+
+            coords_hold = coords
+            data_hold = cls.data
+            for i, f in enumerate( families ):
+                coeffs_hold = {}
+                reconstruct_hold = {}
+                
+                print(f"Running for wavelet family {f}")
+                for d in keys:
+                    # Perform the DWT to get the coefficients
+                    print(f"\tTranforming for key {d}")
+                    if cls.N_dims==1:
+                        if level==1:
+                            coeffs_hold[d] = pywt.dwt(cls.data[d], f, mode=mode.lower())
+                            reconstruct_hold[d] = pywt.idwt( coeffs_hold[d][0], coeffs_hold[d][1], f, mode=mode.lower() )
+                        else:
+                            coeffs_hold[d] = pywt.wavedec(cls.data[d], f, level=level, mode=mode.lower())
+                            reconstruct_hold[d] = pywt.waverec( coeffs_hold[d][:stackup_levels[i]], f, mode=mode.lower() )
+                    elif cls.N_dims==2:
+                        if level==1:
+                            coeffs_hold[d] = pywt.dwt2(cls.data[d], f, mode=mode.lower())
+                            reconstruct_hold[d] = pywt.idwt2( coeffs_hold[d], f, mode=mode.lower() )
+                        else:  
+                            coeffs_hold[d] = pywt.wavedec2(cls.data[d], f, level=level, mode=mode.lower())
+                            reconstruct_hold[d] = pywt.waverec2( coeffs_hold[d][:stackup_levels[i]], f, mode=mode.lower() )
+                    else:
+                        raise ValueError("Too many dimensions requested")
+                    
+                # Perform the coordinate re-assignment
+                import copy
+                recon_shape = np.shape(reconstruct_hold[keys[0]])
+                print(f"The reconstruction is shape {recon_shape}")
+                print(f"The old data is in shape {np.shape(data_hold[d])}")
+                coords_old = copy.deepcopy( coords_hold )
+                for j in range(len(recon_shape)):
+                    coords_hold[j] = np.linspace(np.min(coords_hold[j]), np.max(coords_hold[j]), num=recon_shape[j])
+                    print(f"\tj={j}:\told coord len:\t{len(coords_old[j])}, hold coord len:\t{len(coords_hold[j])}")
+                if len(recon_shape)==2:
+                    COORDS_hold = np.meshgrid(coords_hold[0], coords_hold[1])
+                    COORDS_old = np.meshgrid(coords_hold[0], coords_hold[1])
+
+                print("Meshgrid Coordinates:")
+                interp_coords = np.vstack([c.flatten() for c in COORDS_hold]).T
+                #interp_coords = np.array( interp_coords )
+
+                cls.coords_old = coords_old
+                cls.coords_hold = coords_hold
+                cls.COORDS_hold = COORDS_hold
+                cls.COORDS_old = COORDS_old
+                cls.interp_coords = interp_coords
+                    
+                for d in keys:
+                    # Interpolate old data onto new grid
+                    if interpolator.lower() in ["linear", "lin", "l"]:
+                        interp = sint.RegularGridInterpolator((coords_old[0], coords_old[1]), data_hold[d])
+                        cls.interp = interp
+                        recon_data = interp(interp_coords)
+                    else:
+                        raise ValueError("Invalid interpolator selected.")
+                    data_hold[d] = recon_data.reshape(recon_shape) - reconstruct_hold[d]
+                    
+                cls.coeffs[f] = coeffs_hold[:stackup_levels[i]]
+
+                # TODO: Need to make it so that the levels fit into what is expected
+                # TODO: Need to add in more dimensions
+
+        else:
+            raise ValueError("Invalid stackup method selected.")
+        
+
+        # Store certain values
+        cls.level = level
+
                 
 
 #==================================================================================================
