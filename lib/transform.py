@@ -555,12 +555,15 @@ class WaveletData():
                 cls.coords = coords
 
             import scipy.interpolate as sint
+            import copy
 
             coords_hold = coords
             data_hold = cls.data
             for i, f in enumerate( families ):
                 coeffs_hold = {}
                 reconstruct_hold = {}
+
+                level = stackup_levels[i]
                 
                 print(f"Running for wavelet family {f}")
                 for d in keys:
@@ -569,10 +572,15 @@ class WaveletData():
                     if cls.N_dims==1:
                         if level==1:
                             coeffs_hold[d] = pywt.dwt(cls.data[d], f, mode=mode.lower())
-                            reconstruct_hold[d] = pywt.idwt( coeffs_hold[d][0], coeffs_hold[d][1], f, mode=mode.lower() )
+                            coeffs_pass = list(copy.deepcopy(coeffs_hold[d]))
+                            coeffs_pass[1] = np.zeros_like( coeffs_pass[1] )
+                            reconstruct_hold[d] = pywt.idwt( coeffs_pass[0], coeffs_pass[1], f, mode=mode.lower() )
                         else:
                             coeffs_hold[d] = pywt.wavedec(cls.data[d], f, level=level, mode=mode.lower())
-                            reconstruct_hold[d] = pywt.waverec( coeffs_hold[d][:stackup_levels[i]], f, mode=mode.lower() )
+                            coeffs_pass = list(copy.deepcopy(coeffs_hold[d]))
+                            for i in range(1, len(coeffs_pass)):
+                                coeffs_pass[i] = np.zeros_like(coeffs_pass[i])
+                            reconstruct_hold[d] = pywt.waverec( coeffs_pass, f, mode=mode.lower() )
                     elif cls.N_dims==2:
                         if level==1:
                             coeffs_hold[d] = pywt.dwt2(cls.data[d], f, mode=mode.lower())
@@ -581,45 +589,10 @@ class WaveletData():
                             coeffs_hold[d] = pywt.wavedec2(cls.data[d], f, level=level, mode=mode.lower())
                             reconstruct_hold[d] = pywt.waverec2( coeffs_hold[d][:stackup_levels[i]], f, mode=mode.lower() )
                     else:
-                        raise ValueError("Too many dimensions requested")
-                    
-                # Perform the coordinate re-assignment
-                import copy
-                recon_shape = np.shape(reconstruct_hold[keys[0]])
-                print(f"The reconstruction is shape {recon_shape}")
-                print(f"The old data is in shape {np.shape(data_hold[d])}")
-                coords_old = copy.deepcopy( coords_hold )
-                for j in range(len(recon_shape)):
-                    coords_hold[j] = np.linspace(np.min(coords_hold[j]), np.max(coords_hold[j]), num=recon_shape[j])
-                    print(f"\tj={j}:\told coord len:\t{len(coords_old[j])}, hold coord len:\t{len(coords_hold[j])}")
-                if len(recon_shape)==2:
-                    COORDS_hold = np.meshgrid(coords_hold[0], coords_hold[1])
-                    COORDS_old = np.meshgrid(coords_hold[0], coords_hold[1])
+                        raise ValueError("Too many dimensions requested. N_dim>2 not currently supported.")
 
-                print("Meshgrid Coordinates:")
-                interp_coords = np.vstack([c.flatten() for c in COORDS_hold]).T
-                #interp_coords = np.array( interp_coords )
-
-                cls.coords_old = coords_old
-                cls.coords_hold = coords_hold
-                cls.COORDS_hold = COORDS_hold
-                cls.COORDS_old = COORDS_old
-                cls.interp_coords = interp_coords
-                    
-                for d in keys:
-                    # Interpolate old data onto new grid
-                    if interpolator.lower() in ["linear", "lin", "l"]:
-                        interp = sint.RegularGridInterpolator((coords_old[0], coords_old[1]), data_hold[d])
-                        cls.interp = interp
-                        recon_data = interp(interp_coords)
-                    else:
-                        raise ValueError("Invalid interpolator selected.")
-                    data_hold[d] = recon_data.reshape(recon_shape) - reconstruct_hold[d]
-                    
-                cls.coeffs[f] = coeffs_hold[:stackup_levels[i]]
-
-                # TODO: Need to make it so that the levels fit into what is expected
-                # TODO: Need to add in more dimensions
+                # TODO: Change so that the solve is done by levels rather than rejecting various 
+                #           levels and reconstructing
 
         else:
             raise ValueError("Invalid stackup method selected.")
@@ -627,6 +600,17 @@ class WaveletData():
 
         # Store certain values
         cls.level = level
+        cls.stackup = stackup
+
+    def convergence(cls, ):
+        """
+            In this method, we will be taking the different levels of the wavelet transform and 
+        finding how well they fit to the original data.
+
+        """
+
+        # TODO: We need to actually make this work
+        print("This method hasn't been finished yet")
 
                 
 
@@ -693,7 +677,7 @@ class Decomposition():
             self.A_[v] = np.moveaxis( np.moveaxis( d_ , -1 , 0 )[1:,...] , 0 , -1 )
             
             self.phi[v] , self.sigs[v] , vh = np.linalg.svd( self.A[v] , full_matrices = full_matrx )
-            self.v[v] = np.conj( v.T )
+            self.v[v] = np.conj( vh.T )
             
             self.A_pinv[v] = np.linalg.pinv( self.A[v] )
             
