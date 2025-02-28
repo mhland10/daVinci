@@ -120,10 +120,11 @@ class compressibleGas:
             cls.x_pts = np.linspace(input_spatial_domain[0][0], input_spatial_domain[0][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
             cls.shock_loc += [cls.x_pts[cls.shock_loc_indx]]
         if 'y' in cls.dims:
-            cls.y_pts = np.linspace(input_spatial_domain[0][0], input_spatial_domain[0][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
+            print(f"Interpolating {input_data[key].shape[1]} points in [{input_spatial_domain[0][0]}, {input_spatial_domain[0][-1]}]")
+            cls.y_pts = np.linspace(input_spatial_domain[1][0], input_spatial_domain[1][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
             cls.shock_loc += [cls.y_pts[cls.shock_loc_indx]]
         if 'z' in cls.dims:
-            cls.z_pts = np.linspace(input_spatial_domain[0][0], input_spatial_domain[0][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
+            cls.z_pts = np.linspace(input_spatial_domain[2][0], input_spatial_domain[2][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
             cls.shock_loc += [cls.z_pts[cls.shock_loc_indx]]
         if 't' in cls.dims:
             cls.t_pts = np.linspace(input_time_domain[0], input_time_domain[-1], swt.coeffs[wt_family][key][level][coeff_index].shape[0] )

@@ -42,6 +42,47 @@ from natsort import natsorted
 
 #==================================================================================================
 #
+#   Functions for post-processing
+#
+#==================================================================================================
+
+def point_sweep( anchors, point_Deltas ):
+    """
+        This function creates a set of points around the anchors based on the point_Deltas.
+
+    Args:
+        anchors (numpy ndarray - float):    The anchor points that the sweep will be placed around,
+                                                or anchored to, hence the name. The shape must be:
+
+                                                ( 3 (n dimensions), t (n of time/parameter points) )
+
+        point_Deltas (numpy ndarray - float):   The distribution of points around the anchors.
+
+                                                ( 3 (n dimensions), N (n of points at each sweep) )
+
+    Returns:
+        points (numpy ndarray - float): The distribution of points at each point in shape:
+
+                                        ( t (number of time/parameter points), 3 (n dimensions), N (n of points at each sweep) )
+    
+    """
+
+    # Define the shapes of the data
+    a_shape = np.shape( anchors )
+    d_shape = np.shape( point_Deltas )
+    if not a_shape[0]==d_shape[0]:
+        raise ValueError( "Anchors and point_Deltas do not have the same number of dimensions associate with the points" )
+    p_shape = ( a_shape[1] ,) + ( a_shape[0] ,) + ( d_shape[1] ,)
+
+    # Create and list the 
+    points = np.zeros( p_shape )
+    for i in range( p_shape[0] ):
+        points[i,...] = anchors[:,i][:, np.newaxis] + point_Deltas
+    
+    return points
+
+#==================================================================================================
+#
 #   Post-Processing Objects
 #
 #==================================================================================================
@@ -100,6 +141,7 @@ class dataReader:
 
         # Set coordinate change variable to track if the coordinate change has occured
         self.coord_change=False   
+        self.time_dependent=False
 
     def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"] ):
         """
@@ -331,7 +373,10 @@ class dataReader:
 
         # Set up data dictionary
         cls.data = {}
-        shape_matrix = np.zeros( ( len(cls.time_steps) , np.shape( cls.ext_points )[0] ) )
+        if cls.time_dependent:
+            shape_matrix = np.zeros( ( len(cls.time_steps) , np.shape( cls.points )[1] ) )
+        else:
+            shape_matrix = np.zeros( ( len(cls.time_steps) , np.shape( cls.ext_points )[0] ) )
 
         # Find Source
         sources = pasi.GetSources()
@@ -392,9 +437,12 @@ class dataReader:
                 cls.coordinates = np.zeros( ( len( cls.df_coord[ cls.df_coord.keys()[0] ].to_numpy() ) , N_dims ) )
                 for i in range( N_dims ):
                     cls.coordinates[:,i] = cls.df_coord[ cls.df_coord.keys()[i] ].to_numpy()
-                cls.rake_coordinates = np.zeros( ( np.shape( cls.ext_points )[0] , N_dims ) )
-                for i in range( np.shape( cls.ext_points )[0] ):
-                    cls.rake_coordinates[i,:] = cls.ext_points[i][:N_dims]
+                if cls.time_dependent:
+                    cls.rake_coordinates = cls.points[t_i,:,:N_dims]
+                else:
+                    cls.rake_coordinates = np.zeros( ( np.shape( cls.ext_points )[0] , N_dims ) )
+                    for i in range( np.shape( cls.ext_points )[0] ):
+                        cls.rake_coordinates[i,:] = cls.ext_points[i][:N_dims]
 
                 # Initialize the dictionary
                 if t_i==0:
@@ -560,7 +608,61 @@ class dataReader:
 
         #del cls.resampled_output
 
-    
+class sweep(dataReader):
+    """
+        This object is similar to the rake object, except the points will convect along a central
+    point. This will use any time dependent-enabled functionality, and thus brings some chaneges to
+    the dataReader object usage.
+
+    """
+
+    def __init__(self, anchor, point_distribution, datafile, file_format="vtk" ):
+        """
+        Initialize the rake object according to the inputs to the file.
+
+        Args:
+
+            anchor (float): This is the point where the sweep will convect along during the time
+                                span.
+
+            point_distribution ((arrays/lists)):    The points around "anchor" that are in the 
+                                                        sweep. Must be in the format:
+
+                                                        [$\Delta x$, $\Delta y$, $\Delta z$]
+
+            datafile (string):  The datafile with the CFD data.
+
+            file_format (string, optional): The file format that will be used. The valid options 
+                                                are:
+
+                                            - *"vtk" - The default *.vtk output as OpenFOAM 
+                                                        produces
+                                            
+                                            - "h5" - The *.h5 output that is defined by the 
+
+                                            - None - Take the file format from the "datafile"
+                                                        argument.
+
+        Attributes:
+
+            ext_points [list]:  The externally defined points from "points" re-formatted into a
+                                    Paraview-friendly format.
+        
+        """
+
+        # Insert inherited class data
+        super().__init__( [[0]*2]*3 , datafile , file_format )
+
+        #
+        # Define the points by anchor and point_distribution
+        #
+        self.points = point_sweep( anchor, point_distribution )
+        self.points = np.swapaxes( self.points, 1, 2 )
+        
+        # Set the object to use time-dependent data
+        self.time_dependent=True
+
+
 
 class rake(dataReader):
     """
@@ -881,12 +983,15 @@ class structuredGrid(dataReader):
         # Store the received grid and convert for the dataReader
         self.points_input = points
         self.points_shape = np.shape( self.points_input )
-        X_flat = self.points_input[0].flatten
-        Y_flat = self.points_input[1].flatten
-        Z_flat = self.points_input[2].flatten
+        X_flat = self.points_input[0].flatten()
+        Y_flat = self.points_input[1].flatten()
+        Z_flat = self.points_input[2].flatten()
 
         # Initialize the dataReader object to inherit
         super().__init__( [ X_flat, Y_flat, Z_flat ], datafile, file_format )
+
+        # Move point data
+        self.points = [ X_flat, Y_flat, Z_flat ]
 
     
 
