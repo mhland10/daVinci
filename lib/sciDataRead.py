@@ -397,7 +397,7 @@ class dataReader:
 
         # Writing data to csv
         os.chdir( working_dir )
-        file_write_nm = working_dir + "\\" + data_prefix + str(0) + ".csv"
+        file_write_nm = working_dir + "\\" + data_prefix + "_" + str(len(cls.time_steps)-1) + ".csv"
         file_start = working_dir + "\\" + data_prefix + ".csv"
         if (overwrite or not os.path.exists(file_write_nm)) and write:
             print(f"Changing directory to {os.getcwd()}\n to write {file_write_nm}")
@@ -446,6 +446,7 @@ class dataReader:
 
                 # Initialize the dictionary
                 if t_i==0:
+                    cls.data_raw = np.zeros( np.shape( shape_matrix ) + ( len(cls.df_data.columns) ,) )
                     for i , h in enumerate( cls.df_data.columns ):
                         cls.data[h] = np.zeros_like( shape_matrix )
 
@@ -453,6 +454,7 @@ class dataReader:
                 # TODO: RBFInterpolator() takes up too much RAM. At some point, we should make an optimized
                 #           version that can fit into limited RAM.
                 print("Interpolating points...")
+                """
                 for i , h in enumerate( cls.df_data.columns ):
                     col_data = cls.df_data[h].to_numpy()
                     if interpolator.lower()=="rbf":
@@ -463,7 +465,103 @@ class dataReader:
                         cls.data[h][t_i,:] = sint.LinearNDInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
                     else:
                         raise ValueError("Invalid interpolator selected.")
+                #"""
+                #"""
+                col_data = []
+                for i , h in enumerate( cls.df_data.columns ):
+                    col_data += [cls.df_data[h].to_numpy()]
+                col_data = np.array( col_data ).T
+
+                print("Coordinates are shape:\t",np.shape(cls.coordinates))
+                print("Data is shape:\t",np.shape(col_data))
+                print("Column data sample:\t",col_data)
+
+                if interpolator.lower()=="rbf":
+                    cls.data_raw[t_i,...] = sint.RBFInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
+                elif interpolator.lower()=="ct" and N_dims==2:
+                    cls.data_raw[t_i,...] = sint.CloughTocher2DInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
+                elif interpolator.lower()=="linear" or interpolator.lower()=="lin":
+                    cls.data_raw[t_i,...] = sint.LinearNDInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
+                else:
+                    raise ValueError("Invalid interpolator selected.")
+                
+                for i , h in enumerate( cls.df_data.columns ):
+                    print(f"Putting data back in for key {h}")
+                    cls.data[h][t_i,:] = cls.data_raw[t_i,:,i]
+                #"""
+
                 print(f"Interpolation Finished for Time Index {t_i}")
+
+        elif mp_method.lower()=="mpi":
+
+            # Set import MPI
+            print("MPI multiprocessing method is under construction.")
+            from mpi4py import MPI
+            comm=MPI.COMM_WORLD
+            rank=comm.Get_rank()
+            size=comm.Get_size()
+
+            # Split the time steps
+            steps_xRank = len( cls.time_steps )//size
+            remainders = len( cls.time_steps )%size
+            start_xRank = rank * steps_xRank + min(rank, remainders)
+            end_xRank = start_xRank + steps_xRank + (1 if rank < remainders else 0)
+
+            # Set up the data dictionary
+            if rank==0:
+                for i , h in enumerate( cls.df_data.columns ):
+                        cls.data[h] = np.zeros_like( shape_matrix )
+
+            # Pull the data from the intermediate *.csvs into the dictionary
+            for t_i_raw , t in enumerate( cls.time_steps[start_xRank[rank]:end_xRank[rank]] ):
+                t_i = t_i_raw + start_xRank[rank]
+
+                print(f"Rank {rank} is reading:\t")
+                print(f"Time Index:\t{t_i}")        
+                file_write_nm = working_dir + "\\" + data_prefix + "_" + str(t_i) + ".csv"            
+                
+                # Pull data into dataframe
+                print(f"Reading {file_write_nm}...")
+                df_read = pd.read_csv( file_write_nm,
+                                    sep=',',  # Use '\t' if your file is tab-delimited
+                                    header=0,  # The first row as column names
+                                    )
+                if rm_after_read:
+                    os.remove(file_write_nm)
+                
+                # Separate into coordinates and data
+                data_columns = [col for col in df_read.columns if not col.startswith('CellCenters')]
+                df_data = df_read[data_columns]
+                coord_columns = [col for col in df_read.columns if col.startswith('CellCenters')]
+                df_coord = df_read[coord_columns]
+
+                # Set up the coordinates into numpy array/matrices
+                coordinates = np.zeros( ( len( df_coord[ cls.df_coord.keys()[0] ].to_numpy() ) , N_dims ) )
+                for i in range( N_dims ):
+                    coordinates[:,i] = df_coord[ df_coord.keys()[i] ].to_numpy()
+                if cls.time_dependent:
+                    rake_coordinates = cls.points[t_i,:,:N_dims]
+                else:
+                    rake_coordinates = np.zeros( ( np.shape( cls.ext_points )[0] , N_dims ) )
+                    for i in range( np.shape( cls.ext_points )[0] ):
+                        rake_coordinates[i,:] = cls.ext_points[i][:N_dims]
+
+                # Break the data into a dictionary
+                # TODO: RBFInterpolator() takes up too much RAM. At some point, we should make an optimized
+                #           version that can fit into limited RAM.
+                print("Interpolating points...")
+                for i , h in enumerate( df_data.columns ):
+                    col_data = df_data[h].to_numpy()
+                    if interpolator.lower()=="rbf":
+                        cls.data[h][t_i,:] = sint.RBFInterpolator( coordinates , col_data )( rake_coordinates )
+                    elif interpolator.lower()=="ct" and N_dims==2:
+                        cls.data[h][t_i,:] = sint.CloughTocher2DInterpolator( coordinates , col_data )( rake_coordinates )
+                    elif interpolator.lower()=="linear" or interpolator.lower()=="lin":
+                        cls.data[h][t_i,:] = sint.LinearNDInterpolator( coordinates , col_data )( rake_coordinates )
+                    else:
+                        raise ValueError("Invalid interpolator selected.")
+                print(f"Interpolation Finished for Time Index {t_i}")
+
                                 
         else:
             raise ValueError("No valid multiprocessing method selected.")
@@ -982,7 +1080,7 @@ class structuredGrid(dataReader):
 
         # Store the received grid and convert for the dataReader
         self.points_input = points
-        self.points_shape = np.shape( self.points_input )
+        self.points_shape = np.shape( self.points_input )[1:]
         X_flat = self.points_input[0].flatten()
         Y_flat = self.points_input[1].flatten()
         Z_flat = self.points_input[2].flatten()
@@ -992,6 +1090,37 @@ class structuredGrid(dataReader):
 
         # Move point data
         self.points = [ X_flat, Y_flat, Z_flat ]
+
+    def reform(cls ):
+        """
+            This method puts the data back in the shape of the input points to make grid 
+        calculations easier.
+
+        """
+
+        reform_shape = ( ( len( cls.time_steps ) ,) + cls.points_shape )
+
+        for k in list( cls.data.keys() ):
+            print(f"Looking at key {k}")
+            cls.data[k] = np.reshape( cls.data[k], reform_shape )
+
+
+    def gradients(cls ):
+        """
+            This method calculates the gradients in all directions according to the points the
+        object has
+
+        """
+
+        if cls.points_shape[-1]==1:
+            grad_raw = np.gradient( cls.points_input, axis=(0,1) )
+            cls.points_gradients = np.asarray( [grad_raw[i][i] for i in range(2)] )
+        else:
+            grad_raw = np.gradient( cls.points_input )
+            cls.points_gradients = np.asarray( [grad_raw[i][i] for i in range(3)] )
+
+        # TODO: Fix this so that it take less memory
+    
 
     
 

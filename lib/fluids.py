@@ -31,6 +31,151 @@ from transform import *
 #
 #==================================================================================================
 
+class generalFluid:
+    """
+        This class is dedicated towards producing data for a general fluid.
+
+    """
+    def __init__(self, data, t_points=0, nu=0, composition=None ):
+        """
+            Initialize the generalFluid object.
+
+        
+        """
+        
+        # Store fluid data
+        self.nu = nu
+        self.composition = composition
+
+        # Store data dictionary
+        self.data = data
+        self.t_points=t_points
+
+    def gradientField(cls, gradient_mesh, key=None, N_dims=3, coords=["x", "y", "z"] ):
+        """
+            Define the curl of the fluid field according to the input gradient field that 
+        corresponds to a meshgrid point input
+
+        Args:
+            gradient_mesh (numpy ndarray - float):  The meshgrid-like input according to a meshgrid
+                                                        of points:
+
+                                                    (X, Y, Z)
+
+        """
+
+        # If no keys are given, just take them from the data dictionary
+        if not key:
+            key = list( cls.data.keys() )
+
+        #
+        for i in range(N_dims):
+            print(f"For dimension {coords[i]}:")
+            for k in key: 
+                print(f"\tCreating key:\t d{k}/d{coords[i]}")
+                cls.data[f"d{k}/d{coords[i]}"] = np.zeros_like( cls.data[k] )
+                for j, t in enumerate( cls.t_points ):
+                    print(f"\t\tSetting gradients at t={t:.3e} s.")
+                    grad_data = np.gradient( cls.data[k][j,...], axis=i )[i]
+                    print(f"Gradient of data shape:\t{np.shape(grad_data)}")
+                    cls.data[f"d{k}/d{coords[i]}"][j,...] = grad_data / gradient_mesh[i] 
+
+        # Store the keys where the gradients are
+        cls.gradient_keys = key
+
+        # Store the number of dimensions
+        cls.gradient_N_dims = N_dims
+        cls.gradient_coords = coords
+
+    def curlField(cls, gradient_mesh, key=None, N_dims=None, coords=["x", "y", "z"], coord_loc=-1 ):
+        """
+            This method calculates the curl field based on which keys are vectors.
+
+        Args:
+            key (string, optional): The keys of the fields that will have the curl taken of them. 
+                                        Defaults to None, which looks at which 
+                                    
+
+        """
+
+        if not N_dims:
+            N_dims = len(gradient_mesh)
+
+        def filter_dict_by_key_prefix(d, k):
+            # Convert k to lowercase for case-insensitive comparison
+            k_lower = k.lower()
+            # Create a new dictionary with keys that start with k
+            filtered_dict = {key: value for key, value in d.items() if key.lower().startswith(k_lower)}
+            return filtered_dict
+
+        #
+        for k in key: 
+            print(f"Creating key:\tcurl({k})")
+            cls.data[f"curl({k})"] = []
+            for j, t in enumerate( cls.t_points ):
+                print(f"\tAt time {t:.3e} s")
+
+                # Set the vector field for the time point
+                vector_field_dict = filter_dict_by_key_prefix( cls.data, k )
+                vector_field = np.array( [vf for ky, vf in filter_dict_by_key_prefix( cls.data, k ).items()] )
+                print(f"\t\tVector field: length {len(vector_field)}, where each is shape {np.shape(vector_field[0])}")
+                axes = (1, 2, 3)
+                if N_dims==2:
+                    axes = (1, 2)
+                grad_field = np.array( [np.gradient( v, axis=axes )[i] for i, v in enumerate( vector_field ) if i<N_dims] )#[:N_dims]
+                print(f"\t\tGradient field is shape:\t{np.shape(grad_field)}")
+
+                # Set the gradient field
+                gradient_field = gradient_mesh
+                print(f"\t\tAnd gradient field entries are shape {np.shape(gradient_field)}.")
+
+                # Calculate the curl
+                raw_curl = np.cross( 1/gradient_field, grad_field[:,j,...] , axis=0 )
+                cls.data[f"curl({k})"] += [raw_curl]
+                print(f"\t\tCurl shape is {np.shape(raw_curl)}")
+
+            # Re-form the curl
+            cls.data[f"curl({k})"] = np.asarray( cls.data[f"curl({k})"] )
+
+        # Store the keys where the gradients are
+        cls.curl_keys = key
+
+        # Store the number of dimensions
+        cls.curl_N_dims = N_dims
+        cls.curl_coords = coords
+
+    def sootFoil(cls, keys=None, t_bounds=None ):
+        """
+            This method simulates a soot foil simulation.
+
+        Args:
+            keys (string, optional):    The keys that will be integrated on to simulate the soot 
+                                            foil. Default is None, which uses the ones stored in
+                                            cls.curl_keys
+
+            t_bounds (float, optional): The time bounds of integration. The default is None, which
+                                            goes over the whole of the time steps.
+        
+        """
+
+        # Define the keys
+        if not keys:
+            keys = cls.curl_keys
+        else:
+            raise ValueError("Does not automatically detect specified keys yet.")
+        
+        # Define the time bounds
+        if not t_bounds:
+            t_i_start = 0
+            t_i_end = -1
+        else:
+            raise ValueError("Does not do bounds of integration yet.")
+        
+        # Do the integration
+        for k in keys:
+            cls.data[f"soot foil {k}"] = np.trapz( cls.data[f"curl({k})"], x=cls.t_points[t_i_start:t_i_end] )
+
+
 class compressibleGas:
     """
         This class contains the attributes and methods that pertain to a compressible gas as it
