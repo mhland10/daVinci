@@ -24,6 +24,8 @@ Version Date        Author              Changes
 
 import numpy as np
 from transform import *
+from sciDataRead import sweep
+from distFunctions import *
 
 #==================================================================================================
 #
@@ -111,31 +113,25 @@ class generalFluid:
         #
         for k in key: 
             print(f"Creating key:\tcurl({k})")
-            cls.data[f"curl({k})"] = []
+            cls.data[f"curl({k})"] = np.zeros( ( len(cls.t_points) ,) + np.shape(gradient_mesh)[1:] )
+
+            # Set the vector field for all time points
+            vector_field = np.array( [vf for ky, vf in filter_dict_by_key_prefix( cls.data, k ).items()] )
+            print(f"\t\tVector field: length {len(vector_field)}, where each is shape {np.shape(vector_field[0])}")
+            axes = (1, 2, 3)
+            if N_dims==2:
+                axes = (1, 2)
+            grad_field = np.array( [np.gradient( v, axis=axes )[i] for i, v in enumerate( vector_field ) if i<N_dims] )#[:N_dims]
+            print(f"Gradient field is shape:\t{np.shape(grad_field)}")
+            print(f"And gradient field entries are shape {np.shape(gradient_mesh)}.")
+
             for j, t in enumerate( cls.t_points ):
                 print(f"\tAt time {t:.3e} s")
 
-                # Set the vector field for the time point
-                vector_field_dict = filter_dict_by_key_prefix( cls.data, k )
-                vector_field = np.array( [vf for ky, vf in filter_dict_by_key_prefix( cls.data, k ).items()] )
-                print(f"\t\tVector field: length {len(vector_field)}, where each is shape {np.shape(vector_field[0])}")
-                axes = (1, 2, 3)
-                if N_dims==2:
-                    axes = (1, 2)
-                grad_field = np.array( [np.gradient( v, axis=axes )[i] for i, v in enumerate( vector_field ) if i<N_dims] )#[:N_dims]
-                print(f"\t\tGradient field is shape:\t{np.shape(grad_field)}")
-
-                # Set the gradient field
-                gradient_field = gradient_mesh
-                print(f"\t\tAnd gradient field entries are shape {np.shape(gradient_field)}.")
-
                 # Calculate the curl
-                raw_curl = np.cross( 1/gradient_field, grad_field[:,j,...] , axis=0 )
-                cls.data[f"curl({k})"] += [raw_curl]
+                raw_curl = np.cross( 1/gradient_mesh, grad_field[:,j,...] , axis=0 )
+                cls.data[f"curl({k})"][j] = raw_curl
                 print(f"\t\tCurl shape is {np.shape(raw_curl)}")
-
-            # Re-form the curl
-            cls.data[f"curl({k})"] = np.asarray( cls.data[f"curl({k})"] )
 
         # Store the keys where the gradients are
         cls.curl_keys = key
@@ -144,7 +140,7 @@ class generalFluid:
         cls.curl_N_dims = N_dims
         cls.curl_coords = coords
 
-    def sootFoil(cls, keys=None, t_bounds=None ):
+    def sootFoil(cls, keys=None, t_bounds=None, integration_axis=0 ):
         """
             This method simulates a soot foil simulation.
 
@@ -154,7 +150,10 @@ class generalFluid:
                                             cls.curl_keys
 
             t_bounds (float, optional): The time bounds of integration. The default is None, which
-                                            goes over the whole of the time steps.
+                                            goes over the whole of the time steps. Must be in the 
+                                            format:
+
+                                            [ start time, end time ]
         
         """
 
@@ -169,11 +168,14 @@ class generalFluid:
             t_i_start = 0
             t_i_end = -1
         else:
-            raise ValueError("Does not do bounds of integration yet.")
+            start_errors = np.abs( t_bounds[0]/cls.t_points - 1 )
+            t_i_start = np.argmin( start_errors )
+            end_errors = np.abs( t_bounds[1]/cls.t_points - 1 )
+            t_i_end = np.argmin( end_errors )
         
         # Do the integration
         for k in keys:
-            cls.data[f"soot foil {k}"] = np.trapz( cls.data[f"curl({k})"], x=cls.t_points[t_i_start:t_i_end] )
+            cls.data[f"soot foil {k}"] = np.trapz( cls.data[f"curl({k})"][t_i_start:t_i_end], x=cls.t_points[t_i_start:t_i_end], axis=integration_axis )
 
 
 class compressibleGas:
@@ -205,7 +207,7 @@ class compressibleGas:
         
         print("compressibleGas object created.")
 
-    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0, store_wavelet=False ):
+    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=None ):
         """
             In this method, the presence of a shock will be tracked throughout time. The method
         uses the Discrete Wavelet Transform to track the discontinuity. 
@@ -272,14 +274,77 @@ class compressibleGas:
             cls.z_pts = np.linspace(input_spatial_domain[2][0], input_spatial_domain[2][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
             cls.shock_loc += [cls.z_pts[cls.shock_loc_indx]]
         if 't' in cls.dims:
-            cls.t_pts = np.linspace(input_time_domain[0], input_time_domain[-1], swt.coeffs[wt_family][key][level][coeff_index].shape[0] )
+            if 't' in nonuniform_dims:
+                indices = list( np.arange( 0, len(input_time_domain), np.ceil( len(input_time_domain)/swt.coeffs[wt_family][key][level][coeff_index].shape[0] ).astype(int) ) )
+                if not len(input_time_domain) in indices:
+                    indices += [ len(input_time_domain) ]
+                cls.t_indices = indices
+                cls.t_pts = np.array( input_time_domain )[indices]
+            else:
+                cls.t_pts = np.linspace(input_time_domain[0], input_time_domain[-1], swt.coeffs[wt_family][key][level][coeff_index].shape[0] )
 
         # Calculate the shock velocity
         if 't' in cls.dims:
             cls.shock_velocity = np.gradient( cls.shock_loc[0] , cls.t_pts , edge_order=2)
 
+        # Store the domain for later
+        cls.og_spatial_domain = input_spatial_domain
+        cls.og_time_domain = input_time_domain
 
         return cls.shock_loc, cls.shock_velocity
+    
+    def frozenShockProfile(cls, reader_dir, t_lims=None, step_mults=(1.0, 1e3), N_sweep=1000, data_file_lead="post00*", file_format="h5", reader_dims=['x','y'], reader_interpolator="lin" ):
+        """
+            This method will track the profile along a shock that is tracked via the 
+        shockTracking() method
+
+        Args:
+
+        """
+        print("Under Construction")
+
+        # Interpolate the shock location to the original coordinates
+        if not t_lims:
+            cls.og_shock_loc = np.interp( cls.og_time_domain, cls.t_pts, cls.shock_loc[0] )
+        else:
+            # Filter time points within bounds
+            og_times_filt = [time for time in cls.og_time_domain if np.min(t_lims) <= time <= np.max(t_lims[1])]
+            cls.og_shock_loc = np.interp( og_times_filt , cls.t_pts, cls.shock_loc[0] )
+
+        # Define the anchor of the sweep
+        if 'x' in cls.dims:
+            cls.anchors = np.array([ cls.og_shock_loc, np.zeros_like(cls.og_shock_loc), np.zeros_like(cls.og_shock_loc) ])
+        elif 'y' in cls.dims:  
+            cls.anchors = np.array([ np.zeros_like(cls.og_shock_loc), cls.og_shock_loc, np.zeros_like(cls.og_shock_loc) ])
+        elif 'z' in cls.dims:
+            cls.anchors = np.array([ np.zeros_like(cls.og_shock_loc), np.zeros_like(cls.og_shock_loc), cls.og_shock_loc ])
+        else:
+            raise ValueError("No spatial dimensions to sweep.")
+
+        # Define the delta of the sweep
+        gradients = np.array( [ np.array( np.gradient(cls.og_spatial_domain) )[i][i] for i in range(cls.N_dims) ] )
+        base_step = np.min( np.linalg.norm( gradients, axis=0 ) )
+        min_step = np.min( step_mults ) * base_step
+        max_step = np.max( step_mults ) * base_step 
+        deltas_array = np.logspace( np.log10(min_step), np.log10(max_step), num=N_sweep//2 )
+        if 'x' in cls.dims:
+            cls.deltas = np.array([ deltas_array, np.zeros_like(deltas_array), np.zeros_like(deltas_array) ])
+        elif 'y' in cls.dims:
+            cls.deltas = np.array([ np.zeros_like(deltas_array), deltas_array, np.zeros_like(deltas_array) ])
+        elif 'z' in cls.dims:
+            cls.deltas = np.array([ np.zeros_like(deltas_array), np.zeros_like(deltas_array), deltas_array ])
+        cls.base_step = base_step
+        cls.gradients = gradients
+        
+        # Define the sweep and read from the files
+        frozen_shock = sweep( cls.anchors, np.concatenate(( -cls.deltas[:,::-1], cls.deltas ), axis=-1), data_file_lead, file_format=file_format, t_lims=t_lims )
+        frozen_shock.hdf5DataRead( reader_dir, interpolator=reader_interpolator.lower(), dims=reader_dims )
+        cls.frozen_shock = frozen_shock
+
+        # Provide a filtered version of the data
+        cls.frozen_shock_profile = {}
+        for key, data in cls.frozen_shock.data.items():
+            cls.frozen_shock_profile[key] = np.nanmean( data, axis=0 )
 
         
 

@@ -94,7 +94,7 @@ class dataReader:
     use its functionality.
 
     """
-    def __init__(self, points, datafile, file_format="vtk" ):
+    def __init__(self, points, datafile, file_format="vtk", t_lims=None):
         """
         Initialize the dataReader object according to the inputs to the file.
 
@@ -142,6 +142,9 @@ class dataReader:
         # Set coordinate change variable to track if the coordinate change has occured
         self.coord_change=False   
         self.time_dependent=False
+
+        # Set the time limits
+        self.t_lims = t_lims
 
     def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"] ):
         """
@@ -474,16 +477,21 @@ class dataReader:
 
                 print("Coordinates are shape:\t",np.shape(cls.coordinates))
                 print("Data is shape:\t",np.shape(col_data))
+                print("Sampling coordinates are shape:\t",np.shape(cls.rake_coordinates))
                 print("Column data sample:\t",col_data)
 
                 if interpolator.lower()=="rbf":
+                    print("Interpolating with RBF interpolator...")
                     cls.data_raw[t_i,...] = sint.RBFInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
                 elif interpolator.lower()=="ct" and N_dims==2:
+                    print("Interpolating with Clough Tocher interpolator...")
                     cls.data_raw[t_i,...] = sint.CloughTocher2DInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
                 elif interpolator.lower()=="linear" or interpolator.lower()=="lin":
+                    print("Interpolating with linear interpolator...")
                     cls.data_raw[t_i,...] = sint.LinearNDInterpolator( cls.coordinates , col_data )( cls.rake_coordinates )
                 else:
                     raise ValueError("Invalid interpolator selected.")
+                print("Interpolation finished")
                 
                 for i , h in enumerate( cls.df_data.columns ):
                     print(f"Putting data back in for key {h}")
@@ -568,6 +576,209 @@ class dataReader:
                 
         # Return to original directory
         os.chdir(og_dir)
+
+    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="lin", coords_system=['x','y','z'], mp_method=None ):
+        """
+            This method takes the data from a *.h5 file or such and imports it using h5py rather 
+        than Paraview, which is very slow.
+
+            Note that the dimensions must match the dimension in the CFD analysis, not the data
+        object.
+
+        Args:
+            working_dir (string):   The directory to work the data from.
+
+            group_path (list, optional):    This list of groups to call, in order to reach data one
+                                                is looking for. Defaults to 
+                                                ["STREAM_00","CELL_CENTER_DATA"], which is the 
+                                                default for Converge's h5 files for the cell-
+                                                centered data. Note that this is case sensitive.
+
+            coord_prefix (string, optional):    The string that defines the prefix for the keys
+                                                    that define the coordinates. Case sensitive. 
+                                                    Defaults to "XCEN", which is the default for
+                                                    Converge's h5 files if the cell centers are
+                                                    exported.
+                                    
+            dims (char, optional):  The list of characters that define the dimensions. Defaults to
+                                        ['x', 'y', 'z']. Case sensitive.
+
+            interpolator (string, optional):    Which interpolating function will be used. The
+                                                    valid options are, not case sensitive:
+
+                                                - *"RBF":   The SciPy RBF (radial basis function)
+                                                                interpolator.
+
+                                                - "CT":     The SciPy CloughTocher2D interpolator.
+                                                                Note that this only works when
+                                                                N_dim=2.
+
+                                                - "Linear" or "Lin":    The SciPy linear 
+                                                                        interpolator. Uses Delaunay
+                                                                        triangulation.
+
+
+        """
+
+        import h5py as h5
+        import scipy.interpolate as sint
+
+        # Set number of dimension
+        N_dims = len( dims )
+
+        
+        #
+        # Import time step from file format
+        #
+        cls.time_steps = np.zeros(len(cls.file_list))
+        print(f"Seeing {len(cls.time_steps)} time steps.")
+        if cls.file_format.lower()=="h5":
+            for i in range( len( cls.file_list ) ):
+                fl_nm = cls.file_list[i]
+                raw_name = fl_nm[:-3]
+                time_value = raw_name.split('_')[1][1:]
+                cls.time_steps[i] = float( time_value )
+                #print(f"Time value at i={i}:\t{time_value}")
+        else:
+            raise ValueError("Invalid file format for the method requested.")
+        # Filter time steps as needed
+        if not cls.t_lims is None:
+            filtered_inidices = [i for i in range(len(cls.time_steps)) if cls.time_steps[i]>=np.min(cls.t_lims) and cls.time_steps[i]<=np.max(cls.t_lims)]
+            print(f"Filtered indices:\t{filtered_inidices}")
+            time_steps_filt = [cls.time_steps[i] for i in filtered_inidices]
+            cls.file_list = [cls.file_list[i] for i in filtered_inidices]
+            cls.time_steps = time_steps_filt
+            print(f"Time steps filtered to:\t{cls.time_steps}")
+            print(f"Which is {len(cls.time_steps)} time steps.")
+        
+        #
+        # Set up the coordinates into numpy array/matrices, if not time dependent
+        #
+        if not cls.time_dependent:
+            raw_coordinates = np.array( cls.ext_points )
+            obj_coordinates = np.zeros_like( raw_coordinates[:,:N_dims])
+            for i in range( N_dims ):
+                c = dims[i]
+                for j in range( len(coords_system) ):
+                    cc = coords_system[j]
+                    if c.lower()==cc.lower():
+                        #print(f"Coordinate {c} matches {cc}.")
+                        obj_coordinates[:,i] = raw_coordinates[:,j] 
+            #print(f"The object coordinates are in shape:\t{np.shape(obj_coordinates)}")
+            cls.obj_coordinates = obj_coordinates
+            data_shape = ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,)
+        else:
+            data_shape = ( len(cls.time_steps) ,) + ( len( cls.points[0] ) ,)
+
+        # Initialize our data
+        data_file_path = "/".join(group_path)
+        with h5.File( cls.file_list[1], 'r') as f:
+            group = f[data_file_path]
+            keys = list(group.keys())
+            data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+        data_array = np.zeros( data_shape + ( len(data_keys) ,) )
+        #print(f"Data array shape is {np.shape(data_array)}")
+        cls.data={}
+        for k in data_keys:
+            cls.data[k] = np.zeros( data_shape )
+
+        #
+        # Go through the time steps and interpolate the data
+        #
+        if not mp_method:
+            for i in range( len(cls.time_steps) ):
+                print(f"Working on data index:\t{i}")
+                fl_nm = cls.file_list[i]
+                print(f"Working with file:\t{fl_nm}")
+                t_step = cls.time_steps[i]
+
+
+                #
+                # Set up the coordinates into numpy array/matrices, if time dependent
+                #
+                if cls.time_dependent:
+                    obj_coordinates = cls.points[i,:,:N_dims]
+                    cls.obj_coordinates = obj_coordinates
+                    """
+                    # Initialize our data
+                    data_file_path = "/".join(group_path)
+                    with h5.File( cls.file_list[1], 'r') as f:
+                        group = f[data_file_path]
+                        keys = list(group.keys())
+                        data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+                    data_array = np.zeros( ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,) + ( len(data_keys) ,) )
+                    #print(f"Data array shape is {np.shape(data_array)}")
+                    cls.data={}
+                    for k in data_keys:
+                        cls.data[k] = np.zeros( ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,) )
+                    #"""
+
+                #
+                # Open the h5 file and deposit data
+                #
+                with h5.File( fl_nm, 'r') as f:
+
+                    # Pull the data into the group
+                    group = f[data_file_path]
+
+                    # Get the keys within the group
+                    keys = list(group.keys())
+                    #print(f"Keys available:\t{keys}")
+
+                    # Pull the cell center data
+                    coord_keys_raw = [key for key in keys if key.startswith("XCEN")]
+                    coord_keys = []
+                    for c in coord_keys_raw:
+                        if c[-1].lower() in dims:
+                            coord_keys += [c]
+                    #print(f"The coordinate keys are:\t{coord_keys}")
+                    coordinates = np.zeros( (N_dims ,) + ( len( group[coord_keys[0]] ) ,) ).T
+                    #print(f"Coordinates have shape:\t{np.shape(coordinates)}")
+                    for j in range( N_dims ):
+                        coordinates[:,j] = group[coord_keys[j]][:]
+                    cls.coordinates = coordinates
+
+                    # Store the data into an array for interpolation
+                    data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+                    #print(f"The data keys are:\t{data_keys}")
+                    data_raw = np.zeros( ( len( group[coord_keys[0]] ) ,) + ( len(data_keys) ,) )
+                    #print(f"Raw data shape:\t{np.shape(data_raw)}")
+                    for j in range( len( data_keys ) ):
+                        data_raw[:,j] = group[data_keys[j]][:]
+
+                #
+                # Do the interpolation
+                #
+                #print(f"Coordinates has shape:\t{np.shape(coordinates)}")
+                cls.coordinates = coordinates
+                #print(f"Data raw has shape:\t{np.shape(data_raw)}")
+                #print(f"Object coordinates has shape:\t{np.shape(obj_coordinates)}")
+                if interpolator.lower() in ["lin","linear"]:
+                    data_interpolator_raw = sint.LinearNDInterpolator( coordinates, data_raw )( obj_coordinates )
+                elif interpolator.lower() in ["rbf","radial basis function"]:
+                    data_interpolator_raw = sint.RBFInterpolator( coordinates, data_raw )( obj_coordinates )
+                else:
+                    raise ValueError("Invalid interpolator selected.")
+                #print(f"Original data:\t{data_raw}")
+                #print(f"New data:\t{data_interpolator_raw}")
+                data_array[i,...] = data_interpolator_raw
+
+                #
+                # Move data into dictionary
+                #
+                for j in range( len( data_keys ) ):
+                    k = data_keys[j]
+                    #print(f"Depositing data for keys {k}:")
+                    #print(f"\t{data_array[i,:,j]}")
+                    cls.data[k][i,:] = data_array[i,:,j]
+                    #print(f"\t{cls.data[k]}")
+                    #print(f"\tMin Data:\t{np.min(cls.data[k][i,...])}")
+                    #print(f"\tMax Data:\t{np.max(cls.data[k][i,...])}")
+                    #print(f"\tMean Data:\t{np.mean(cls.data[k][i,...])}")
+
+        else:
+            raise ValueError("Invalid multiprocessing method chosen.")
+        
 
     def hdf5Write( cls , filename , working_dir ):
         """
@@ -714,7 +925,7 @@ class sweep(dataReader):
 
     """
 
-    def __init__(self, anchor, point_distribution, datafile, file_format="vtk" ):
+    def __init__(self, anchor, point_distribution, datafile, file_format="vtk", t_lims=None ):
         """
         Initialize the rake object according to the inputs to the file.
 
@@ -749,13 +960,15 @@ class sweep(dataReader):
         """
 
         # Insert inherited class data
-        super().__init__( [[0]*2]*3 , datafile , file_format )
+        super().__init__( [[0]*2]*3 , datafile , file_format, t_lims=t_lims )
 
         #
         # Define the points by anchor and point_distribution
         #
         self.points = point_sweep( anchor, point_distribution )
         self.points = np.swapaxes( self.points, 1, 2 )
+        anchors = anchor.T[:, None, :] 
+        self.frozen_points = self.points - anchors
         
         # Set the object to use time-dependent data
         self.time_dependent=True
