@@ -121,7 +121,16 @@ class generalFluid:
             axes = (1, 2, 3)
             if N_dims==2:
                 axes = (1, 2)
-            grad_field = np.array( [np.gradient( v, axis=axes )[i] for i, v in enumerate( vector_field ) if i<N_dims] )#[:N_dims]
+            """
+            for i, v in enumerate( vector_field ):
+                if i < N_dims:
+                    print(f"i:\t{i}")
+                    print(f"axes:\t{axes}")
+                    print(f"v:\t{v}")
+                    print(f"Gradient shape:\t{np.shape(np.gradient( v, axis=np.array(axes)-1 ))}")
+                    print(f"Gradient sample:\t{np.gradient( v, axis=np.array(axes)-1 )}")
+            """
+            grad_field = np.array( [np.gradient( v, axis=np.array(axes)-1 )[i] for i, v in enumerate( vector_field ) if i<N_dims] )
             print(f"Gradient field is shape:\t{np.shape(grad_field)}")
             print(f"And gradient field entries are shape {np.shape(gradient_mesh)}.")
 
@@ -207,7 +216,7 @@ class compressibleGas:
         
         print("compressibleGas object created.")
 
-    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=None ):
+    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=[" "] ):
         """
             In this method, the presence of a shock will be tracked throughout time. The method
         uses the Discrete Wavelet Transform to track the discontinuity. 

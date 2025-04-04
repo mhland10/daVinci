@@ -146,7 +146,171 @@ class dataReader:
         # Set the time limits
         self.t_lims = t_lims
 
-    def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"] ):
+    def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], coordinate_system=['x', 'y', 'z'], interpolator="rbf" ):
+        """
+            This reader reads an OpenFOAM case using Paraview
+
+        Args:
+            working_dir (string):   The directory of the case.
+
+            file_name (string, optional):   The name of the file to read the OpenFOAM data.
+                                                Defaults to "foam.foam"
+
+        """
+        # Move to the working directory
+        os.chdir( working_dir )
+
+        # Find the number of dimension from the coordinate system
+        N_dims = len( coordinate_system )
+
+        #
+        # Import modules
+        #
+        import paraview.simple as pasi
+        import paraview.servermanager as pase
+        import scipy.interpolate as sint
+
+        # Read the OpenFOAM file
+        full_flnm = working_dir+"\\"+file_name
+        if verbosity>0:
+            print(f"The full filename is {full_flnm}")
+        cls.foam = pasi.OpenFOAMReader( registrationName=file_name, FileName=full_flnm )
+        cls.foam.MeshRegions = ["internalMesh"]
+        cls.foam.UpdatePipeline()
+
+        # Check if cells exist now
+        if verbosity>0:
+            print("Number of cells:", cls.foam.GetDataInformation().GetNumberOfCells())
+        
+        # Pull the time steps available
+        cls.time_steps = cls.foam.TimestepValues
+
+        # Get cell centers
+        cls.cell_centers = pasi.CellCenters(Input=cls.foam)
+        cls.cell_centers.UpdatePipeline()
+
+        # Fetch data into a numpy-compatible format
+        cell_data = pase.Fetch(cls.foam)
+        centers_data = pase.Fetch(cls.cell_centers)
+        if verbosity>0:
+            print(f"Number of blocks in cell centers: {centers_data.GetNumberOfBlocks()}")
+            print(f"Number of blocks in cell data: {cell_data.GetNumberOfBlocks()}")
+
+        # Extract the internal mesh block
+        internal_centers = centers_data.GetBlock(0)
+        internal_cells = cell_data.GetBlock(0)
+        if internal_centers is None or internal_cells is None:
+            raise ValueError("No valid internal mesh block found in the OpenFOAM case.")
+        
+        # Initialize storage for extracted data
+        cls.data = {internal_cells.GetCellData().GetArrayName(i): [] for i in range( internal_cells.GetCellData().GetNumberOfArrays() ) if internal_cells.GetCellData().GetArrayName(i) not in vector_headers }
+        for h in vector_headers:
+            for c in coordinate_system:
+                cls.data[h+":"+c] = []
+
+        for j, t in enumerate( cls.time_steps ):
+            print(f"Current time step {t} at index {j}...")
+
+            # Move the Paraview reader along
+            cls.foam.UpdatePipeline(t)
+
+            # Get cell centers
+            cls.cell_centers = pasi.CellCenters(Input=cls.foam)
+            cls.cell_centers.UpdatePipeline()
+
+            # Fetch data into a numpy-compatible format
+            cell_data = pase.Fetch(cls.foam)
+            centers_data = pase.Fetch(cls.cell_centers)
+            if verbosity>1:
+                print(f"Number of blocks in cell centers: {centers_data.GetNumberOfBlocks()}")
+                print(f"Number of blocks in cell data: {cell_data.GetNumberOfBlocks()}")
+
+            # Extract the internal mesh block
+            internal_centers = centers_data.GetBlock(0)
+            internal_cells = cell_data.GetBlock(0)
+            if internal_centers is None or internal_cells is None:
+                raise ValueError("No valid internal mesh block found in the OpenFOAM case.")
+
+            # Extract cell center coordinates
+            num_cells = internal_centers.GetNumberOfPoints()
+            cell_coords = np.array([internal_centers.GetPoint(i) for i in range(num_cells)])
+            cls.cell_coords = cell_coords
+
+            # Extract field data
+            num_arrays = internal_cells.GetCellData().GetNumberOfArrays()
+            data_dict = {}
+            for i in range(num_arrays):
+                name = internal_cells.GetCellData().GetArrayName(i)
+                array = internal_cells.GetCellData().GetArray(i)
+                data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
+            for h in vector_headers:
+                for i in range( data_dict[h].shape[-1] ):
+                    if i<N_dims:
+                        data_dict[h+":"+coordinate_system[i]]=np.array([list(data_dict[h][:,i])]).T
+                data_dict.pop(h)
+            cls.data_dict = data_dict
+            if verbosity>1:
+                for k in list( data_dict.keys() ):
+                    print( f"Key {k} has shape {data_dict[k].shape}" )
+            data_matrix = np.array([ data_dict[k][...,0] for k in list( data_dict.keys() ) ])
+            cls.data_matrix = data_matrix
+
+            # Print summary
+            if verbosity>1:
+
+                # Combine coordinates and field data
+                full_data = {"coordinates": cell_coords}
+                full_data.update(data_dict)
+
+                print(f"Extracted {len(cell_coords)} cell centers.")
+                print("Available fields:", list(full_data.keys()))
+                print("First 5 cell centers:\n", cell_coords[:5])
+                if "U" in full_data:
+                    print("First 5 velocity vectors:\n", full_data["U"][:5])
+
+            # Interpolate onto the points
+            if interpolator.lower() in ["rbf", "rbfinterpolator","radial basis function", "radialbasisfunction"]:
+                if 0.0 in np.sum( cell_coords[:,:N_dims] , axis=0 ):
+                    #print("Actually, it's 1D")
+                    drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
+                    print(f"Dropping dimension {drop_dim}")
+                    object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
+                else:
+                    object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T )( cls.points[:,:N_dims] )
+            elif interpolator.lower() in ["l", "lin", "linear", "linearnd", "delaunay", "delaunaytriangulation"]:
+                if 0.0 in np.sum( cell_coords[:,:N_dims] , axis=0 ):
+                    #print("Actually, it's 1D")
+                    drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
+                    print(f"Dropping dimension {drop_dim}")
+                    object_data = sint.LinearNDInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
+                else:
+                    object_data = sint.LinearNDInterpolator( cell_coords[:,:N_dims ], data_matrix.T )( cls.points[:,:N_dims] )
+            else:
+                raise ValueError( "Invalid interpolator selected" )
+            
+            # Re-arrange back into the keys
+            for i, k in enumerate( list( data_dict.keys() ) ):
+                cls.data[k] += [object_data[:,i]]
+
+        if not cls.time_dependent:
+            for i, k in enumerate( list( cls.data.keys() ) ):
+                
+                # Check if there is a homogeneous size
+                try:
+                    cls.data[k] = np.array( cls.data[k] )
+                except:
+                    raise Warning( "The data is not truly time dependent" )
+
+
+
+        
+                  
+
+
+
+
+
+    def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"], data="point" ):
         """
         This method reads the data using the Paraview engine and stores the data in the rake object
             in a dictionary.
@@ -233,7 +397,10 @@ class dataReader:
         #print("Resample attributes:\t"+str(dir(resample)))
         pasi.UpdatePipeline()
         resampled_output = pasi.servermanager.Fetch(resample)
-        point_data = resampled_output.GetPointData()
+        if data.lower() in ["p", "point", "points", "pointdata"]:
+            point_data = resampled_output.GetPointData()
+        elif data.lower() in ["c", "cell", "cells", "celldata"]:
+            point_data = resampled_output.GetCellData()
 
         # Get array headers
         cls.array_headers = [point_data.GetArrayName(i) for i in range(point_data.GetNumberOfArrays())]
@@ -256,7 +423,10 @@ class dataReader:
 
             # Fetch resampled output
             resampled_output = pasi.servermanager.Fetch(resample)
-            point_data = resampled_output.GetPointData()
+            if data.lower() in ["p", "point", "points", "pointdata"]:
+                point_data = resampled_output.GetPointData()
+            elif data.lower() in ["c", "cell", "cells", "celldata"]:
+                point_data = resampled_output.GetCellData()
 
 
             # Extract data for each variable and store it
@@ -745,6 +915,7 @@ class dataReader:
                     #print(f"Raw data shape:\t{np.shape(data_raw)}")
                     for j in range( len( data_keys ) ):
                         data_raw[:,j] = group[data_keys[j]][:]
+                print("**Data pull complete**")
 
                 #
                 # Do the interpolation
@@ -762,6 +933,7 @@ class dataReader:
                 #print(f"Original data:\t{data_raw}")
                 #print(f"New data:\t{data_interpolator_raw}")
                 data_array[i,...] = data_interpolator_raw
+                print("**Interpolation complete**")
 
                 #
                 # Move data into dictionary
