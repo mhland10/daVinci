@@ -146,7 +146,7 @@ class dataReader:
         # Set the time limits
         self.t_lims = t_lims
 
-    def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], coordinate_system=['x', 'y', 'z'], interpolator="rbf" ):
+    def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None ):
         """
             This reader reads an OpenFOAM case using Paraview
 
@@ -155,6 +155,42 @@ class dataReader:
 
             file_name (string, optional):   The name of the file to read the OpenFOAM data.
                                                 Defaults to "foam.foam"
+
+            verbosity (int, optional):  The verbosity of the reader. 0 is no output, 1 is some 
+                                        output, and 2 is all the output.
+
+            vector_headers (list, optional):    The list of headers that are vectors that need to 
+                                                be split into their respective components. Defaults
+                                                to ["U"].
+
+            coordinate_system (list, optional):    The coordinate system that will be used. Applies
+                                                    to the vector headers and the interpolation. 
+                                                    Defaults to ['x', 'y', 'z'].
+
+            interpolator (string, optional):    The interpolator that will be used. The valid 
+                                                options are:
+
+                                                - *"rbf", "rbfinterpolator", 
+                                                    "radial basis function", "radialbasisfunction":
+
+                                                    For the radial basis function interpolator.
+
+                                                - "l", "lin", "linear", "linearnd", "delaunay", 
+                                                    "delaunaytriangulation":
+
+                                                    For the linear interpolator. Uses Delaunay
+                                                    triangulation on the back end.
+
+                                                Not cases sensitive.
+
+            accelerator (string, optional):    The accelerator that will be used. The valid options are:
+
+                                                - *None:   No accelerator will be used.
+
+                                                - "cuda", "cu", "c", "cupy":   The CUDA accelerator
+                                                    will be used via CuPy.
+
+                                                Not case sensitive.                                            
 
         """
         # Move to the working directory
@@ -168,7 +204,12 @@ class dataReader:
         #
         import paraview.simple as pasi
         import paraview.servermanager as pase
-        import scipy.interpolate as sint
+        if not accelerator:
+            import scipy.interpolate as sint
+        elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
+            import cupyx.scipy.interpolate as sint
+        else:
+            raise ValueError( "Invalid accelerator engine selected" )
 
         # Read the OpenFOAM file
         full_flnm = working_dir+"\\"+file_name
@@ -282,7 +323,12 @@ class dataReader:
                     #print("Actually, it's 1D")
                     drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
                     print(f"Dropping dimension {drop_dim}")
-                    object_data = sint.LinearNDInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
+                    x = np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ))[0] )
+                    y = data_matrix.T
+                    x_new = np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ))[0] )
+                    print(f"x is shape {np.shape(x)} and y is shape {np.shape(y)}")
+                    print(f"x_new is shape {np.shape(x_new)} in [{np.min(x_new)}, {np.max(x_new)}]")
+                    object_data = sint.interp1d( x , y , kind="linear", axis=0 )( x_new )
                 else:
                     object_data = sint.LinearNDInterpolator( cell_coords[:,:N_dims ], data_matrix.T )( cls.points[:,:N_dims] )
             else:
@@ -290,7 +336,10 @@ class dataReader:
             
             # Re-arrange back into the keys
             for i, k in enumerate( list( data_dict.keys() ) ):
-                cls.data[k] += [object_data[:,i]]
+                if not accelerator:
+                    cls.data[k] += [object_data[:,i]]
+                elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
+                    cls.data[k] += [object_data[:,i].get()]
 
         if not cls.time_dependent:
             for i, k in enumerate( list( cls.data.keys() ) ):
@@ -300,15 +349,6 @@ class dataReader:
                     cls.data[k] = np.array( cls.data[k] )
                 except:
                     raise Warning( "The data is not truly time dependent" )
-
-
-
-        
-                  
-
-
-
-
 
     def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"], data="point" ):
         """
@@ -479,7 +519,7 @@ class dataReader:
                 cls.data_dict.pop(p)
         cls.data = cls.data_dict
         
-    def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , write=True , rm_after_read=False , mp_method=None , N_cores=None ):
+    def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , write=True , rm_after_read=False , mp_method=None , N_cores=None, accelerator=None ):
         """
         This method reads the data using the Converge engine and stores the data in the rake object
             in a dictionary.
@@ -530,7 +570,12 @@ class dataReader:
 
         import paraview.simple as pasi
         import pandas as pd
-        import scipy.interpolate as sint
+        if not accelerator:
+            import scipy.interpolate as sint
+        elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
+            import cupyx.scipy.interpolate as sint
+        else:
+            raise ValueError( "Invalid accelerator engine selected" )
         
         # Load the data from the files
         cls.data = pasi.CONVERGECFDReader(FileName=cls.file_list[0])
@@ -665,7 +710,10 @@ class dataReader:
                 
                 for i , h in enumerate( cls.df_data.columns ):
                     print(f"Putting data back in for key {h}")
-                    cls.data[h][t_i,:] = cls.data_raw[t_i,:,i]
+                    if not accelerator:
+                        cls.data[h][t_i,:] = cls.data_raw[t_i,:,i]
+                    elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
+                        cls.data[h][t_i,:] = cls.data_raw[t_i,:,i].get()
                 #"""
 
                 print(f"Interpolation Finished for Time Index {t_i}")

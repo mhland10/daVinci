@@ -216,7 +216,7 @@ class compressibleGas:
         
         print("compressibleGas object created.")
 
-    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=[" "] ):
+    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=[" "], filter_nan=True ):
         """
             In this method, the presence of a shock will be tracked throughout time. The method
         uses the Discrete Wavelet Transform to track the discontinuity. 
@@ -267,7 +267,10 @@ class compressibleGas:
 
         # Find the index of the shock location on a spatial domain that corresponds to the original 
         # data, but with the shape of the wavelet coefficients
-        cls.shock_loc_indx = np.argmax( np.abs( swt.coeffs[wt_family][key][level][coeff_index] ) , axis=-1 )
+        if filter_nan:
+            cls.shock_loc_indx = np.nanargmax( np.abs( swt.coeffs[wt_family][key][level][coeff_index] ) , axis=-1 )
+        else:
+            cls.shock_loc_indx = np.argmax( np.abs( swt.coeffs[wt_family][key][level][coeff_index] ) , axis=-1 )
 
         # Set up alternative domain
         cls.shock_loc = []
