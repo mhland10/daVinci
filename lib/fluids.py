@@ -264,6 +264,16 @@ class compressibleGas:
 
         # Perform the wavelet transform on the data with the specified keys
         swt.waveletTransform([wt_family], keys=[key] )
+        used_domain = []
+        if 't' in cls.dims:
+            used_domain += [input_time_domain]
+        if 'x' in cls.dims:
+            used_domain += [input_spatial_domain[0]]
+        if 'y' in cls.dims: 
+            used_domain += [input_spatial_domain[1]]
+        if 'z' in cls.dims:
+            used_domain += [input_spatial_domain[2]]
+        swt.domains( used_domain )
 
         # Find the index of the shock location on a spatial domain that corresponds to the original 
         # data, but with the shape of the wavelet coefficients
@@ -275,25 +285,18 @@ class compressibleGas:
         # Set up alternative domain
         cls.shock_loc = []
         if 'x' in cls.dims:
-            print(f"Interpolating {input_data[key].shape[1]} points in [{input_spatial_domain[0][0]}, {input_spatial_domain[0][-1]}]")
-            cls.x_pts = np.linspace(input_spatial_domain[0][0], input_spatial_domain[0][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
+            print(f"x data is in {cls.dims.index('x')}")
+            cls.x_pts = swt.domain[level][cls.dims.index('x')]
             cls.shock_loc += [cls.x_pts[cls.shock_loc_indx]]
         if 'y' in cls.dims:
             print(f"Interpolating {input_data[key].shape[1]} points in [{input_spatial_domain[0][0]}, {input_spatial_domain[0][-1]}]")
-            cls.y_pts = np.linspace(input_spatial_domain[1][0], input_spatial_domain[1][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
+            cls.y_pts = swt.domain[level][cls.dims.index('y')]
             cls.shock_loc += [cls.y_pts[cls.shock_loc_indx]]
         if 'z' in cls.dims:
-            cls.z_pts = np.linspace(input_spatial_domain[2][0], input_spatial_domain[2][-1], swt.coeffs[wt_family][key][level][coeff_index].shape[-1] )
+            cls.z_pts = swt.domain[level][cls.dims.index('z')]
             cls.shock_loc += [cls.z_pts[cls.shock_loc_indx]]
         if 't' in cls.dims:
-            if 't' in nonuniform_dims:
-                indices = list( np.arange( 0, len(input_time_domain), np.ceil( len(input_time_domain)/swt.coeffs[wt_family][key][level][coeff_index].shape[0] ).astype(int) ) )
-                if not len(input_time_domain) in indices:
-                    indices += [ len(input_time_domain) ]
-                cls.t_indices = indices
-                cls.t_pts = np.array( input_time_domain )[indices]
-            else:
-                cls.t_pts = np.linspace(input_time_domain[0], input_time_domain[-1], swt.coeffs[wt_family][key][level][coeff_index].shape[0] )
+            cls.t_pts = swt.domain[level][cls.dims.index('t')]
 
         # Calculate the shock velocity
         if 't' in cls.dims:

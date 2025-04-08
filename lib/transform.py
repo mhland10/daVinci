@@ -602,6 +602,90 @@ class WaveletData():
         cls.level = level
         cls.stackup = stackup
 
+    def domains(cls, coords, level=None, coord_format="list"):
+        """
+            This method finds the domain for the wavelet transform.
+
+        Args:
+            coords (float - numpy ndarray):  The coordinates of the data in the discrete wavelet
+                                                transform. Must be in a list or array. See 
+                                                coord_fromat for formatting information.
+
+            level (int, optional):  The number of levels in the DWT. Defaults to None.
+
+            coord_format (string, optional):    The format of the coordinates. The valid options
+                                                are:
+
+                                                - *"list" or "l": The coordinates are in a list. 
+                                                    Each entry in a list must be an array or list
+                                                    that corresponds to the coordinates and shape
+                                                    of the data along the entry's axis.
+
+                                                - "mesh", "meshgrid", or "m":   The coordinates are
+                                                    in a meshgrid format. The coordinates must be in the 
+                                                    shape of the data.
+
+        """
+
+        #
+        # Check the format of the coordinates
+        #
+        cls.cf = coord_format.lower()
+        print(f"Coordinate format:\t{cls.cf}, type:\t{type(cls.cf)}")
+        if cls.cf in ["list", "l"]:
+            for i in range(len(coords)):
+                print(f"\tThe coordinates are shape {len(coords[i])}, while the data is shape {np.shape(cls.data[list(cls.data.keys())[0]])[i]}")
+                len_diff = len(coords[i])-np.shape(cls.data[list(cls.data.keys())[0]])[i]
+                if not len_diff==0:
+                    raise ValueError(f"Coordinate {i} does not match the shape of the data.")
+        elif cls.cf in ["mesh", "meshgrid", "m"]: 
+            if not len(coords)==len(cls.data[cls.data.keys()[0]])==2:
+                raise ValueError("The meshgrid coordinates are not the same shape as the data.")
+        else:
+            raise ValueError("Invalid coordinate format selected.")
+            
+        #
+        # Calculate the step size for the DWT data
+        #
+        steps = []
+        raw_gradients = []
+        if cls.cf in ["list", "l"]:
+            raw_gradients += [np.gradient(coords[i]) for i in range(len(coords))]
+        elif cls.cf in ["mesh", "meshgrid", "m"]:
+            raw_gradients += [np.gradient(coords, axis=i) for i in range(len(coords.shape))]
+        steps = [np.mean(raw_gradients[i]) for i in range(len(raw_gradients))]
+
+        #
+        # Calculate the steps in the domain for the DWT data
+        #
+        cls.level_steps = []
+        if not level:
+            level = cls.max_levels
+        for i in range(level+1):
+            cls.level_steps += [np.array(steps)*(2**(i+1))]
+        cls.level_steps = cls.level_steps[::-1]
+        print(f"The level steps are {cls.level_steps}")
+
+        #
+        # Calculate the domain for the DWT data
+        #
+        cls.domain = []
+        for i in range(level+1):
+            if cls.cf in ["list", "l"]:
+                addition = []
+                for j in range( len( coords ) ):
+                    beginning = coords[j][0]
+                    end = coords[j][-1]+2*cls.level_steps[i][j]
+                    addition += [np.arange( beginning, end, cls.level_steps[i][j] )]
+                cls.domain += [ addition ]
+            elif cls.cf in ["mesh", "meshgrid", "m"]:
+                cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
+                                          np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
+                                          cls.level_steps[i] ) ]
+
+            
+        
+
     def convergence(cls, ):
         """
             In this method, we will be taking the different levels of the wavelet transform and 
