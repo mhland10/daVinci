@@ -627,61 +627,134 @@ class WaveletData():
 
         """
 
-        #
-        # Check the format of the coordinates
-        #
-        cls.cf = coord_format.lower()
-        print(f"Coordinate format:\t{cls.cf}, type:\t{type(cls.cf)}")
-        if cls.cf in ["list", "l"]:
-            for i in range(len(coords)):
-                print(f"\tThe coordinates are shape {len(coords[i])}, while the data is shape {np.shape(cls.data[list(cls.data.keys())[0]])[i]}")
-                len_diff = len(coords[i])-np.shape(cls.data[list(cls.data.keys())[0]])[i]
-                if not len_diff==0:
-                    raise ValueError(f"Coordinate {i} does not match the shape of the data.")
-        elif cls.cf in ["mesh", "meshgrid", "m"]: 
-            if not len(coords)==len(cls.data[cls.data.keys()[0]])==2:
-                raise ValueError("The meshgrid coordinates are not the same shape as the data.")
-        else:
-            raise ValueError("Invalid coordinate format selected.")
-            
-        #
-        # Calculate the step size for the DWT data
-        #
-        steps = []
-        raw_gradients = []
-        if cls.cf in ["list", "l"]:
-            raw_gradients += [np.gradient(coords[i]) for i in range(len(coords))]
-        elif cls.cf in ["mesh", "meshgrid", "m"]:
-            raw_gradients += [np.gradient(coords, axis=i) for i in range(len(coords.shape))]
-        steps = [np.mean(raw_gradients[i]) for i in range(len(raw_gradients))]
-
-        #
-        # Calculate the steps in the domain for the DWT data
-        #
-        cls.level_steps = []
+        # Set the number of levels
         if not level:
-            level = cls.max_levels
-        for i in range(level+1):
-            cls.level_steps += [np.array(steps)*(2**(i+1))]
-        cls.level_steps = cls.level_steps[::-1]
-        print(f"The level steps are {cls.level_steps}")
+            level = cls.level
 
         #
-        # Calculate the domain for the DWT data
+        # If the data has multiple dimensions
         #
-        cls.domain = []
-        for i in range(level+1):
+        if cls.N_dims>1:
+
+            #
+            # Check the format of the coordinates
+            #
+            cls.cf = coord_format.lower()
+            print(f"Coordinate format:\t{cls.cf}, type:\t{type(cls.cf)}")
             if cls.cf in ["list", "l"]:
-                addition = []
-                for j in range( len( coords ) ):
-                    beginning = coords[j][0]
-                    end = coords[j][-1]+2*cls.level_steps[i][j]
-                    addition += [np.arange( beginning, end, cls.level_steps[i][j] )]
-                cls.domain += [ addition ]
+                for i in range(len(coords)):
+                    print(f"\tThe coordinates are shape {len(coords[i])}, while the data is shape {np.shape(cls.data[list(cls.data.keys())[0]])[i]}")
+                    len_diff = len(coords[i])-np.shape(cls.data[list(cls.data.keys())[0]])[i]
+                    if not len_diff==0:
+                        raise ValueError(f"Coordinate {i} does not match the shape of the data.")
+            elif cls.cf in ["mesh", "meshgrid", "m"]: 
+                if not len(coords)==len(cls.data[cls.data.keys()[0]])==2:
+                    raise ValueError("The meshgrid coordinates are not the same shape as the data.")
+            else:
+                raise ValueError("Invalid coordinate format selected.")
+                
+            #
+            # Calculate the step size for the DWT data
+            #
+            steps = []
+            raw_gradients = []
+            if cls.cf in ["list", "l"]:
+                raw_gradients += [np.gradient(coords[i]) for i in range(len(coords))]
             elif cls.cf in ["mesh", "meshgrid", "m"]:
-                cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
-                                          np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
-                                          cls.level_steps[i] ) ]
+                raw_gradients += [np.gradient(coords, axis=i) for i in range(len(coords.shape))]
+            steps = [np.mean(raw_gradients[i]) for i in range(len(raw_gradients))]
+
+            #
+            # Calculate the steps in the domain for the DWT data
+            #
+            cls.level_steps = []
+            if not level:
+                level = cls.max_levels
+            for i in range(level+1):
+                if i<level:
+                    cls.level_steps += [np.array(steps)*(2**(i+1))]
+                elif i>=level:
+                    cls.level_steps += [np.array(steps)*(2**(i))]
+            cls.level_steps = cls.level_steps[::-1]
+            print(f"The level steps are {cls.level_steps}")
+
+            #
+            # Calculate the domain for the DWT data
+            #
+            cls.domain = []
+            for i in range(level+1):
+                if cls.cf in ["list", "l"]:
+                    addition = []
+                    for j in range( len( coords ) ):
+                        beginning = coords[j][0]
+                        end = coords[j][-1]+2*cls.level_steps[i][j]
+                        addition += [np.arange( beginning, end, cls.level_steps[i][j] )]
+                    cls.domain += [addition]
+                elif cls.cf in ["mesh", "meshgrid", "m"]:
+                    cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
+                                            np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
+                                            cls.level_steps[i] ) ]
+
+        #
+        # If the data is 1D
+        #  
+        else:
+
+            #
+            # Check the format of the coordinates
+            #
+            cls.cf = coord_format.lower()
+            print(f"Coordinate format:\t{cls.cf}, type:\t{type(cls.cf)}")
+            if cls.cf in ["list", "l"]:
+                print(f"\tThe coordinates are shape {len(coords)}, while the data is shape {np.shape(cls.data[list(cls.data.keys())[0]])[0]}")
+                len_diff = len(coords)-np.shape(cls.data[list(cls.data.keys())[0]])[0]
+                if not len_diff==0:
+                    raise ValueError(f"Coordinate 0 does not match the shape of the data.")
+            elif cls.cf in ["mesh", "meshgrid", "m"]: 
+                if not len(coords)==len(cls.data[cls.data.keys()[0]])==2:
+                    raise ValueError("The meshgrid coordinates are not the same shape as the data.")
+            else:
+                raise ValueError("Invalid coordinate format selected.")
+            
+            #
+            # Calculate the step size for the DWT data
+            #
+            steps = []
+            raw_gradients = []
+            if cls.cf in ["list", "l"]:
+                raw_gradients = np.gradient(coords)
+            elif cls.cf in ["mesh", "meshgrid", "m"]:
+                raw_gradients = np.gradient(coords)
+            steps = np.mean(raw_gradients)
+
+            #
+            # Calculate the steps in the domain for the DWT data
+            #
+            cls.level_steps = []
+            if not level:
+                level = cls.max_levels
+            for i in range(level+1):
+                if i<level:
+                    cls.level_steps += [np.array(steps)*(2**(i+1))]
+                if i>=level:
+                    cls.level_steps += [np.array(steps)*(2**(i))]
+            cls.level_steps = cls.level_steps[::-1]
+            print(f"The level steps are {cls.level_steps}")
+
+            #
+            # Calculate the domain for the DWT data
+            #
+            cls.domain = []
+            for i in range(level+1):
+                if cls.cf in ["list", "l"]:
+                    beginning = coords[0]
+                    end = coords[-1]+2*cls.level_steps[i]
+                    addition = [np.arange( beginning, end, cls.level_steps[i] )]
+                    cls.domain += addition
+                elif cls.cf in ["mesh", "meshgrid", "m"]:
+                    cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
+                                            np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
+                                            cls.level_steps[i] ) ]
 
             
         

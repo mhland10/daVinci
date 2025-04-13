@@ -1,4 +1,5 @@
 *.pyc
+*.cpython-310.pyc
 *.pth
 *.h5
 __pycache__
