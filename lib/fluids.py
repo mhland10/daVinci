@@ -216,7 +216,8 @@ class compressibleGas:
         
         print("compressibleGas object created.")
 
-    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3" , level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=[" "], filter_nan=True ):
+    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3", 
+                      level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=[" "], filter_nan=True, gradient_order=None ):
         """
             In this method, the presence of a shock will be tracked throughout time. The method
         uses the Discrete Wavelet Transform to track the discontinuity. 
@@ -300,7 +301,13 @@ class compressibleGas:
 
         # Calculate the shock velocity
         if 't' in cls.dims:
-            cls.shock_velocity = np.gradient( cls.shock_loc[0] , cls.t_pts , edge_order=2)
+            if not gradient_order or gradient_order==1:
+                cls.shock_velocity = np.gradient( cls.shock_loc[0] , cls.t_pts , edge_order=2)
+            elif gradient_order>1:
+                num_grad = numericalGradient( 1, ( gradient_order//2, gradient_order//2 ) )
+                cls.shock_velocity = num_grad.gradientCalc( cls.t_pts, cls.shock_loc[0] )
+                cls.num_grad = num_grad
+
 
         # Store the domain for later
         cls.og_spatial_domain = input_spatial_domain

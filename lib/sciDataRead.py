@@ -146,7 +146,7 @@ class dataReader:
         # Set the time limits
         self.t_lims = t_lims
 
-    def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None ):
+    def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, headers_read=None ):
         """
             This reader reads an OpenFOAM case using Paraview
 
@@ -282,8 +282,16 @@ class dataReader:
             data_dict = {}
             for i in range(num_arrays):
                 name = internal_cells.GetCellData().GetArrayName(i)
-                array = internal_cells.GetCellData().GetArray(i)
-                data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
+                if not headers_read:
+                    array = internal_cells.GetCellData().GetArray(i)
+                    data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
+                else:
+                    if name in vector_headers:
+                        array = internal_cells.GetCellData().GetArray(i)
+                        data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
+                    if name in headers_read:
+                        array = internal_cells.GetCellData().GetArray(i)
+                        data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
             for h in vector_headers:
                 for i in range( data_dict[h].shape[-1] ):
                     if i<N_dims:

@@ -445,7 +445,8 @@ class WaveletData():
         cls.coordinates = coordinates
         cls.time_steps = time_steps
 
-    def waveletTransform(cls, families, keys=None, level=None, mode="symmetric", stackup="equivalent", stackup_levels=None, t_axis=0, interpolator="linear" ):
+    def waveletTransform(cls, families, keys=None, level=None, mode="symmetric", stackup="equivalent", stackup_levels=None,
+                         t_axis=0, interpolator="linear" ):
         """
             Perform the wavelet transform 
 
@@ -601,6 +602,8 @@ class WaveletData():
         # Store certain values
         cls.level = level
         cls.stackup = stackup
+        cls.mode = mode
+        cls.families = families
 
     def domains(cls, coords, level=None, coord_format="list"):
         """
@@ -627,6 +630,7 @@ class WaveletData():
 
         """
 
+<<<<<<< Updated upstream
         # Set the number of levels
         if not level:
             level = cls.level
@@ -755,6 +759,76 @@ class WaveletData():
                     cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
                                             np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
                                             cls.level_steps[i] ) ]
+=======
+        #
+        # Check the format of the coordinates
+        #
+        cls.cf = coord_format.lower()
+        print(f"Coordinate format:\t{cls.cf}, type:\t{type(cls.cf)}")
+        if cls.cf in ["list", "l"]:
+            for i in range(len(coords)):
+                print(f"\tThe coordinates are shape {len(coords[i])}, while the data is shape {np.shape(cls.data[list(cls.data.keys())[0]])[i]}")
+                len_diff = len(coords[i])-np.shape(cls.data[list(cls.data.keys())[0]])[i]
+                if not len_diff==0:
+                    raise ValueError(f"Coordinate {i} does not match the shape of the data. ")
+        elif cls.cf in ["mesh", "meshgrid", "m"]: 
+            if not len(coords)==len(cls.data[cls.data.keys()[0]])==2:
+                raise ValueError("The meshgrid coordinates are not the same shape as the data.")
+        else:
+            raise ValueError("Invalid coordinate format selected.")
+            
+        #
+        # Calculate the step size for the DWT data
+        #
+        steps = []
+        raw_gradients = []
+        if cls.cf in ["list", "l"]:
+            raw_gradients += [np.gradient(coords[i]) for i in range(len(coords))]
+        elif cls.cf in ["mesh", "meshgrid", "m"]:
+            raw_gradients += [np.gradient(coords, axis=i) for i in range(len(coords.shape))]
+        steps = [np.mean(raw_gradients[i]) for i in range(len(raw_gradients))]
+
+        #
+        # Calculate the steps in the domain for the DWT data
+        #
+        cls.level_steps = []
+        if not level:
+            level = cls.max_levels
+        for i in range(level+1):
+            cls.level_steps += [np.array(steps)*(2**(i+1))]        
+        print(f"The level steps are {cls.level_steps}")
+
+        #
+        # Get the shape of the DWT data
+        #
+        cls.wt_shape = pywt.wavedecn_shapes( cls.data[list(cls.data.keys())[0]].shape, cls.families[0], mode=cls.mode )[::-1]
+        print(f"The shape of the DWT data is {cls.wt_shape}")
+
+        #
+        # Calculate the domain for the DWT data
+        #
+        cls.domain = []
+        for i in range(level+1):
+            if isinstance( cls.wt_shape[i], dict ):
+                sz = cls.wt_shape[i]["dd"]
+                print(f"Level {i+1} is size {sz}")
+            else:
+                sz = cls.wt_shape[i]
+                print(f"Approximation is size {sz}")
+            
+            if cls.cf in ["list", "l"]:
+                addition = []
+                for j in range( len( coords ) ):
+                    beginning = coords[j][0]
+                    end = cls.level_steps[i][j] * sz[j] + coords[j][0]
+                    addition += [np.arange( beginning, end, cls.level_steps[i][j] )]
+                cls.domain += [ addition ]
+            elif cls.cf in ["mesh", "meshgrid", "m"]:
+                cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
+                                          np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
+                                          cls.level_steps[i] ) ]
+        cls.domain = cls.domain[::-1]
+>>>>>>> Stashed changes
 
             
         
