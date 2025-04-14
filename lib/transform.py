@@ -779,7 +779,7 @@ class WaveletData():
                 
 class Decomposition():
     
-    def __init__( self , data , decomposition_axis , precision = np.float64 , target_processor = 'cpu' , full_matrx = True ):
+    def __init__( self, data, decomposition_axis=-1, precision=np.float64, target_processor='cpu', full_matrx=True ):
         """
         Calculates the decompositions for the incoming data dictionary along
             the specified axis.
@@ -819,24 +819,37 @@ class Decomposition():
         
         
         variables = list( data.keys() )
+        self.variables = variables
         
+        self.X = {}
+        self.Y = {}
         self.A = {}
-        self.A_ = {}
-        self.A_pinv = {}
-        self.phi = {}
-        self.sigs = {}
-        self.v = {}
         for i , v in enumerate( variables ):
-            d = np.moveaxis( data[v] , decomposition_axis , -1 )
-            d_shape = np.shape( d )
-            d_ = np.reshape( d , ( np.prod( d_shape[:-1] ) ,) + ( d_shape[-1] ) )
-            self.A[v] = np.moveaxis( np.moveaxis( d_ , -1 , 0 )[:-1,...] , 0 , -1 )
-            self.A_[v] = np.moveaxis( np.moveaxis( d_ , -1 , 0 )[1:,...] , 0 , -1 )
+            print(f"Data is shape {data[v].shape}")
+            #
+            # For matrix data
+            #
+            if len( data[v].shape )>1:
+                d = np.moveaxis( data[v] , decomposition_axis , -1 )
+                d_shape = np.shape( d )
+                d_ = np.reshape( d , ( np.prod( d_shape[:-1] ) ,) + ( d_shape[-1] ) )
+                self.X[v] = np.moveaxis( np.moveaxis( d_ , -1 , 0 )[:-1,...] , 0 , -1 )
+                self.Y[v] = np.moveaxis( np.moveaxis( d_ , -1 , 0 )[1:,...] , 0 , -1 )
+
+                self.A[v] = np.matmul( self.Y[v], np.linalg.pinv( self.X[v] ) )
+
+            #
+            # For array data
+            #
+            else:
+                D = {}
+                d = len(data[v])//2
+                D[v] = np.array( [np.roll( data[v], -i ) for i in range(len(data[v]))] )
+                self.X[v] = D[v][:d,:d]
+                self.Y[v] = D[v][1:d+1,:d]
+                
             
-            self.phi[v] , self.sigs[v] , vh = np.linalg.svd( self.A[v] , full_matrices = full_matrx )
-            self.v[v] = np.conj( vh.T )
-            
-            self.A_pinv[v] = np.linalg.pinv( self.A[v] )
+                self.A[v] = np.roll( np.matmul( self.Y[v] , np.linalg.pinv( self.X[v] ) ), -1, axis=-1 )
             
     def POD( cls ):
         """
@@ -848,8 +861,11 @@ class Decomposition():
         None.
 
         """
-        
-        cls.POD_modes = cls.phi
+
+        cls.energies = {}
+        cls.POD_modes = {}
+        for v in cls.variables:
+            cls.POD_modes[v], cls.energies[v], _ = np.linalg.svd( cls.X[v] )
         
     def DMD( cls ):
         """
@@ -861,6 +877,22 @@ class Decomposition():
         None.
 
         """
+
+        cls.eigenvalues = {}
+        cls.DMD_modes = {}
+        cls.POD_modes = {}
+        cls.energies = {}
+        for v in cls.variables:
+            cls.POD_modes[v], cls.energies[v], _ = np.linalg.svd( cls.X[v] )
+            if np.iscomplexobj( cls.POD_modes[v] ):
+                A_tilda = np.matmul( cls.POD_modes[v].H, cls.A[v], cls.POD_modes[v] )
+            else:
+                A_tilda = np.matmul( cls.POD_modes[v].T, cls.A[v], cls.POD_modes[v] )
+            Lambda, V_tilda = np.linalg.eig( A_tilda )
+            cls.DMD_modes[v] = np.matmul( cls.POD_modes[v], V_tilda )
+            cls.eigenvalues[v] = Lambda
+
+
         
         
 
