@@ -1202,7 +1202,6 @@ class sweep(dataReader):
         self.time_dependent=True
 
 
-
 class rake(dataReader):
     """
     This object is a rake of points that allows the user to draw data from the datafiles to draw

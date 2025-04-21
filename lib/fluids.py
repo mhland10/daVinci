@@ -368,6 +368,9 @@ class compressibleGas:
         for key, data in cls.frozen_shock.data.items():
             cls.frozen_shock_profile[key] = np.nanmean( data, axis=0 )
 
+
+#============================
+
         
 
         

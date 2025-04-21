@@ -630,7 +630,6 @@ class WaveletData():
 
         """
 
-<<<<<<< Updated upstream
         # Set the number of levels
         if not level:
             level = cls.level
@@ -759,7 +758,6 @@ class WaveletData():
                     cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
                                             np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
                                             cls.level_steps[i] ) ]
-=======
         #
         # Check the format of the coordinates
         #
@@ -828,7 +826,6 @@ class WaveletData():
                                           np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
                                           cls.level_steps[i] ) ]
         cls.domain = cls.domain[::-1]
->>>>>>> Stashed changes
 
             
         
