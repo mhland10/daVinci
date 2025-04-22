@@ -629,6 +629,7 @@ class WaveletData():
                                                     shape of the data.
 
         """
+        #print(f"Received coordinates:\t{coords}")
 
         # Set the number of levels
         if not level:
@@ -637,8 +638,9 @@ class WaveletData():
         #
         # If the data has multiple dimensions
         #
+        print(f"**Using {cls.N_dims}D data**")
         if cls.N_dims>1:
-
+            
             #
             # Check the format of the coordinates
             #
@@ -666,6 +668,7 @@ class WaveletData():
             elif cls.cf in ["mesh", "meshgrid", "m"]:
                 raw_gradients += [np.gradient(coords, axis=i) for i in range(len(coords.shape))]
             steps = [np.mean(raw_gradients[i]) for i in range(len(raw_gradients))]
+            #print(f"Raw gradients:\t{raw_gradients}")
 
             #
             # Calculate the steps in the domain for the DWT data
@@ -699,7 +702,7 @@ class WaveletData():
                                             cls.level_steps[i] ) ]
 
         #
-        # If the data is 1D
+        # If the data is >1D
         #  
         else:
 
