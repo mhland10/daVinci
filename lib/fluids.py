@@ -290,7 +290,6 @@ class compressibleGas:
             cls.x_pts = swt.domain[level][cls.dims.index('x')]
             cls.shock_loc += [cls.x_pts[cls.shock_loc_indx]]
         if 'y' in cls.dims:
-            print(f"Interpolating {input_data[key].shape[1]} points in [{input_spatial_domain[0][0]}, {input_spatial_domain[0][-1]}]")
             cls.y_pts = swt.domain[level][cls.dims.index('y')]
             cls.shock_loc += [cls.y_pts[cls.shock_loc_indx]]
         if 'z' in cls.dims:
