@@ -26,6 +26,7 @@ import numpy as np
 import cupy as cp
 import pywt
 from numba import jit, prange
+import copy
 
 ###############################################################################
 #
@@ -228,6 +229,124 @@ def fourierTransform1D( data , dt = 1.0 , N = None , fft_method = 'normal' ,
     amplitude_data = amplitude_data_flat
         
     return frequency_data , amplitude_data
+
+#==================================================================================================
+#
+#   DWT Functions
+#
+#==================================================================================================
+
+def samplesToCoeffsDWT( N_samples, N_levels, support, verbosity=0 ):
+    """
+        This determines which samples of the original signal are represented by the coefficients
+    for each level of the DWT.
+
+        Note that this only pertains to a 1D DWT of multiple levels.
+
+    Args:
+        N_samples (int):    The number of samples in the original signal.
+
+        N_levels (int): The number of levels in the DWT.
+
+        support (int): The number of samples in the wavelet used in the DWT.
+
+    Returns:
+        coeff_list (list, int): A list of integers where each integer represents the number of coefficients at each level of the DWT. In the format:
+
+                                [ level ][ coefficient index, sample index ]
+
+    """
+
+    coeff_list = []
+    for i in np.arange( N_levels ):
+        # The number of coefficients at this level
+        N_samples_perLevel = np.ceil( N_samples / ( 2 ** i ) ).astype(int)
+
+        # The number of samples represented by each coefficient
+        N_samples_per_coeff = int( support * ( 2 ** i ) )
+
+        # The number of coefficients that can be represented at this level
+        N_coeffs_per_level = ( N_samples + support - 1 ) // 2
+
+        if verbosity > 0:
+            print( f"Level {i}: {N_samples_perLevel} samples, each coefficient representing {N_samples_per_coeff} samples, totaling {N_coeffs_per_level} coefficients" )
+
+        #
+        #   Produce the list of indices from the original signal that are represented by each coefficient
+        # 
+        coeff_list_atLevel = np.zeros( ( N_coeffs_per_level, N_samples_per_coeff ), dtype=int )
+        if verbosity > 1:
+            print( f"\tcoeff_list_atLevel.shape: {coeff_list_atLevel.shape}" )
+        for j in np.arange( coeff_list_atLevel.shape[0] ):
+            coeff_list_atLevel[j, :] = np.arange( j * 2, j * 2 + N_samples_per_coeff )-1
+
+
+        # Check if the last coefficient goes over for over samples and shift as needed
+        #"""
+        if np.max( coeff_list_atLevel ) >= N_samples:
+            difference = np.max( coeff_list_atLevel ) - N_samples
+            if verbosity > 0:
+                print( f"\tLast coefficient goes over the number of samples, shifting by {difference//2}" )
+            coeff_list_atLevel = coeff_list_atLevel - difference // 2
+        #"""
+
+        coeff_list += [ coeff_list_atLevel ]
+
+
+    return coeff_list
+
+def lineDomainDWT( domain, N_levels, support, verbosity=0 ):
+    """
+        This function converts a 1D domain into the equivalent domain represented by the DWT coefficients.
+    
+
+    Args:
+        domain (float, array):  The original domain to be converted.
+
+        N_levels (int): The number of levels in the DWT.
+
+        support (int): The number of samples in the wavelet used in the DWT.
+
+    Returns:
+        DWT_domain (float, list): The domain represented by the DWT coefficients. Will be in format:
+                                    [ level ][ coefficient index ]
+
+                                    
+    """
+
+    # Pull the coefficients for the domain
+    coeffs = samplesToCoeffsDWT( domain.shape[0], N_levels, support )
+
+    # Initialize the DWT domain
+    DWT_domain = []
+    for l in np.arange( N_levels ):
+        if verbosity > 0:
+            print(f"Level {l}:")
+        DWT_domain_atLevel = np.zeros( coeffs[l].shape[0] )
+        for c in np.arange( coeffs[l].shape[0] ):
+            if verbosity > 0:
+                print(f"\tCoefficient {c}:\t{coeffs[l][c]}")
+
+            # Correct for lower bound
+            filtered_coeffs = coeffs[l][c][coeffs[l][c]>=0]
+
+            # Correct for upper bound
+            filtered_coeffs = filtered_coeffs[filtered_coeffs<domain.shape[0]]
+
+            # Add the domain represented by this coefficient
+            domain_at_coeff = domain[ filtered_coeffs ]
+            if verbosity > 1:
+                print(f"\t\tDomain at coefficient {c}:\t{domain_at_coeff}")
+
+            # Calculate the centroid for the domain at the coefficient
+            DWT_domain_atLevel[c] = np.mean( domain_at_coeff )
+
+        DWT_domain += [ DWT_domain_atLevel ]
+
+    return DWT_domain
+
+
+
 
 ###############################################################################
 #
@@ -446,7 +565,7 @@ class WaveletData():
         cls.time_steps = time_steps
 
     def waveletTransform(cls, families, keys=None, level=None, mode="symmetric", stackup="equivalent", stackup_levels=None,
-                         t_axis=0, interpolator="linear" ):
+                         t_axis=0, interpolator="linear", dwt_axis=-1 ):
         """
             Perform the wavelet transform 
 
@@ -507,6 +626,9 @@ class WaveletData():
             keys = cls.data.keys()
         print(f"Transforming for {keys}")
 
+        # Store the DWT axis as needed
+        cls.dwt_axis = dwt_axis
+
         # Find the stackup lengths if not given
         if not stackup_levels:
             stackup_levels = [1] * len( families )
@@ -523,7 +645,7 @@ class WaveletData():
                         if level==1:
                             coeffs_hold[d] = pywt.dwt(cls.data[d], f, mode=mode.lower())
                         else:
-                            coeffs_hold[d] = pywt.wavedec(cls.data[d], f, level=level, mode=mode.lower())
+                            coeffs_hold[d] = pywt.wavedec(cls.data[d], f, level=level, mode=mode.lower(), axis=dwt_axis)
                     elif cls.N_dims==2:
                         if level==1:
                             coeffs_hold[d] = pywt.dwt2(cls.data[d], f, mode=mode.lower())
@@ -536,64 +658,7 @@ class WaveletData():
         elif stackup.lower() in ["heirarchical", "heirarchy", "h"]:
             # Perform the wavelet transform by family of wavelets, then keys, then dimensions while
             #   removing preceding wavelet transforms 
-            if not len(families)==len(stackup_levels):
-                raise ValueError("The list of stackup_levels does not match the list of wavelet families. Must be the same length.")
-            
-            # Set up the coordinates that will be used for heirarchical use
-            if not hasattr(cls, "coordinates"):
-                raise ValueError("No coordinates in the wavelet object. Need to run the importCoordinates() method.")
-            else:
-                coords = []
-                if not t_axis==None:
-                    for i in range( len(cls.coordinates)+1 ):
-                        if i==t_axis or (i==len(cls.coordinates) and t_axis==-1):
-                            coords+= [cls.time_steps]
-                        else:
-                            if i>t_axis:
-                                coords+= [cls.coordinates[i-1]]
-                            else:
-                                coords+= [cls.coordinates[i]]
-                cls.coords = coords
-
-            import scipy.interpolate as sint
-            import copy
-
-            coords_hold = coords
-            data_hold = cls.data
-            for i, f in enumerate( families ):
-                coeffs_hold = {}
-                reconstruct_hold = {}
-
-                level = stackup_levels[i]
-                
-                print(f"Running for wavelet family {f}")
-                for d in keys:
-                    # Perform the DWT to get the coefficients
-                    print(f"\tTranforming for key {d}")
-                    if cls.N_dims==1:
-                        if level==1:
-                            coeffs_hold[d] = pywt.dwt(cls.data[d], f, mode=mode.lower())
-                            coeffs_pass = list(copy.deepcopy(coeffs_hold[d]))
-                            coeffs_pass[1] = np.zeros_like( coeffs_pass[1] )
-                            reconstruct_hold[d] = pywt.idwt( coeffs_pass[0], coeffs_pass[1], f, mode=mode.lower() )
-                        else:
-                            coeffs_hold[d] = pywt.wavedec(cls.data[d], f, level=level, mode=mode.lower())
-                            coeffs_pass = list(copy.deepcopy(coeffs_hold[d]))
-                            for i in range(1, len(coeffs_pass)):
-                                coeffs_pass[i] = np.zeros_like(coeffs_pass[i])
-                            reconstruct_hold[d] = pywt.waverec( coeffs_pass, f, mode=mode.lower() )
-                    elif cls.N_dims==2:
-                        if level==1:
-                            coeffs_hold[d] = pywt.dwt2(cls.data[d], f, mode=mode.lower())
-                            reconstruct_hold[d] = pywt.idwt2( coeffs_hold[d], f, mode=mode.lower() )
-                        else:  
-                            coeffs_hold[d] = pywt.wavedec2(cls.data[d], f, level=level, mode=mode.lower())
-                            reconstruct_hold[d] = pywt.waverec2( coeffs_hold[d][:stackup_levels[i]], f, mode=mode.lower() )
-                    else:
-                        raise ValueError("Too many dimensions requested. N_dim>2 not currently supported.")
-
-                # TODO: Change so that the solve is done by levels rather than rejecting various 
-                #           levels and reconstructing
+            print("Under construction")
 
         else:
             raise ValueError("Invalid stackup method selected.")
@@ -639,6 +704,8 @@ class WaveletData():
         #
         cls.wt_shape = pywt.wavedecn_shapes( cls.data[list(cls.data.keys())[0]].shape, cls.families[0], mode=cls.mode )
         print(f"The shape of the DWT data is {cls.wt_shape}")
+
+        # Get the shape of thet wavelets
 
         #
         # If the data has multiple dimensions
@@ -687,10 +754,12 @@ class WaveletData():
                     cls.level_steps += [np.array(steps)*(2**(i))]
             cls.level_steps = cls.level_steps[::-1]
             print(f"The level steps are {cls.level_steps}")
+            
 
             #
             # Calculate the domain for the DWT data
             #
+            """
             cls.domain = []
             print(f"There are {level} levels")
             for i in range(level+1):
@@ -712,6 +781,29 @@ class WaveletData():
                     cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
                                             np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
                                             cls.level_steps[i] ) ]
+            #"""
+                    
+            #   Calculate the support
+            wavelets = []
+            supports = []
+            for i, f in enumerate( cls.families ):
+                wavelets += [pywt.Wavelet( f )]
+                supports += [wavelets[i].dec_len]
+            cls.supports = supports
+
+            #
+            # Calculate the domain for the DWT data
+            #
+            cls.domain = []
+            print(f"There are {level} levels")
+            for j in range( len( coords ) ):
+                print(f"\tj={j}")
+                raw_domains = lineDomainDWT( coords[j], level, supports[0] )
+                addition = raw_domains[::-1]
+                print(f"\t\tAddition:\t{addition}")
+                cls.domain += [addition]
+
+
 
         #
         # If the data is 1D
@@ -725,54 +817,36 @@ class WaveletData():
             print(f"Coordinate format:\t{cls.cf}, type:\t{type(cls.cf)}")
             if cls.cf in ["list", "l"]:
                 print(f"\tThe coordinates are shape {len(coords)}, while the data is shape {np.shape(cls.data[list(cls.data.keys())[0]])[0]}")
-                len_diff = len(coords)-np.shape(cls.data[list(cls.data.keys())[0]])[0]
-                if not len_diff==0:
-                    raise ValueError(f"Coordinate 0 does not match the shape of the data.")
+                len_diff = len(coords)-np.shape(cls.data[list(cls.data.keys())[0]])[cls.dwt_axis]
+                #if not len_diff==0:
+                #    raise ValueError(f"Coordinate 0 does not match the shape of the data.")
             elif cls.cf in ["mesh", "meshgrid", "m"]: 
                 if not len(coords)==len(cls.data[cls.data.keys()[0]])==2:
                     raise ValueError("The meshgrid coordinates are not the same shape as the data.")
             else:
                 raise ValueError("Invalid coordinate format selected.")
             
-            #
-            # Calculate the step size for the DWT data
-            #
-            steps = []
-            raw_gradients = []
-            if cls.cf in ["list", "l"]:
-                raw_gradients = np.gradient(coords)
-            elif cls.cf in ["mesh", "meshgrid", "m"]:
-                raw_gradients = np.gradient(coords)
-            steps = np.mean(raw_gradients)
+            #   Calculate the support
+            wavelets = []
+            supports = []
+            for i, f in enumerate( cls.families ):
+                wavelets += [pywt.Wavelet( f )]
+                supports += [wavelets[i].dec_len]
+            cls.supports = supports
 
-            #
-            # Calculate the steps in the domain for the DWT data
-            #
-            cls.level_steps = []
+            # Calculate the number of levels
             if not level:
                 level = cls.max_levels
-            for i in range(level+1):
-                if i<level:
-                    cls.level_steps += [np.array(steps)*(2**(i+1))]
-                if i>=level:
-                    cls.level_steps += [np.array(steps)*(2**(i))]
-            cls.level_steps = cls.level_steps[::-1]
-            print(f"The level steps are {cls.level_steps}")
 
             #
-            # Calculate the domain for the DWT data
+            # Calculate the domains for the DWT data
             #
-            cls.domain = []
-            for i in range(level+1):
-                if cls.cf in ["list", "l"]:
-                    beginning = coords[0]
-                    end = coords[-1]+2*cls.level_steps[i]
-                    addition = [np.arange( beginning, end, cls.level_steps[i] )]
-                    cls.domain += addition
-                elif cls.cf in ["mesh", "meshgrid", "m"]:
-                    cls.domain += [ np.arange( np.moveaxis( np.moveaxis( coords[i], i, 0 )[0,...], 0, i ), 
-                                            np.moveaxis( np.moveaxis( coords[i], i, 0 )[-1,...], 0, i )+cls.level_steps[i], 
-                                            cls.level_steps[i] ) ]
+            cls.domains_DWT = {}
+            for i, f in enumerate( cls.families ):
+                raw_domains = lineDomainDWT( coords, level, supports[i] )
+                raw_domains += [ raw_domains[-1] ]  # Add the last domain to the list
+                cls.domains_DWT[f] = raw_domains[::-1]
+
 
             
         

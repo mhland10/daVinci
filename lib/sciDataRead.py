@@ -70,6 +70,7 @@ def point_sweep( anchors, point_Deltas ):
     # Define the shapes of the data
     a_shape = np.shape( anchors )
     d_shape = np.shape( point_Deltas )
+    print(f"Anchor shape: {a_shape}, Point Delta shape: {d_shape}")
     if not a_shape[0]==d_shape[0]:
         raise ValueError( "Anchors and point_Deltas do not have the same number of dimensions associate with the points" )
     p_shape = ( a_shape[1] ,) + ( a_shape[0] ,) + ( d_shape[1] ,)
@@ -199,6 +200,9 @@ class dataReader:
 
         # Find the number of dimension from the coordinate system
         N_dims = len( coordinate_system )
+        if verbosity>0:
+            print(f"Number of dimensions: {N_dims}")
+            print(f"Coordinate system: {coordinate_system}")
 
         #
         # Import modules
@@ -320,7 +324,7 @@ class dataReader:
 
             # Interpolate onto the points
             if interpolator.lower() in ["rbf", "rbfinterpolator","radial basis function", "radialbasisfunction"]:
-                if 0.0 in np.sum( cell_coords[:,:N_dims] , axis=0 ):
+                if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ):
                     #print("Actually, it's 1D")
                     drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
                     print(f"Dropping dimension {drop_dim}")
@@ -528,7 +532,7 @@ class dataReader:
                 cls.data_dict.pop(p)
         cls.data = cls.data_dict
         
-    def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , write=True , rm_after_read=False , mp_method=None , N_cores=None, accelerator=None ):
+    def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , write=True , rm_after_read=False , mp_method=None , N_cores=None, accelerator=None, headers_exclude=[], fill_value=None ):
         """
         This method reads the data using the Converge engine and stores the data in the rake object
             in a dictionary.
@@ -696,6 +700,10 @@ class dataReader:
                 #"""
                 col_data = []
                 for i , h in enumerate( cls.df_data.columns ):
+                    """
+                    if h not in headers_exclude:
+                        col_data += [cls.df_data[h].to_numpy()]
+                    """
                     col_data += [cls.df_data[h].to_numpy()]
                 col_data = np.array( col_data ).T
 
@@ -804,7 +812,7 @@ class dataReader:
         # Return to original directory
         os.chdir(og_dir)
 
-    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="lin", coords_system=['x','y','z'], mp_method=None ):
+    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="lin", coords_system=['x','y','z'], mp_method=None, headers_exclude=[] ):
         """
             This method takes the data from a *.h5 file or such and imports it using h5py rather 
         than Paraview, which is very slow.
@@ -852,6 +860,8 @@ class dataReader:
 
         # Set number of dimension
         N_dims = len( dims )
+        cls.N_dims = N_dims
+        cls.dims = dims
 
         #
         # Switch between interpolation reading and raw reading
@@ -912,6 +922,11 @@ class dataReader:
             cls.data={}
             for k in data_keys:
                 cls.data[k] = np.zeros( data_shape )
+            
+            # Find the number of non-excluded headers
+            to_keep = np.setdiff1d(data_keys, headers_exclude)
+            keep_count = to_keep.size
+            cls.to_keep = to_keep
 
             #
             # Go through the time steps and interpolate the data
@@ -954,7 +969,7 @@ class dataReader:
 
                         # Get the keys within the group
                         keys = list(group.keys())
-                        #print(f"Keys available:\t{keys}")
+                        print(f"Keys available:\t{keys}")
 
                         # Pull the cell center data
                         coord_keys_raw = [key for key in keys if key.startswith("XCEN")]
@@ -974,8 +989,14 @@ class dataReader:
                         #print(f"The data keys are:\t{data_keys}")
                         data_raw = np.zeros( ( len( group[coord_keys[0]] ) ,) + ( len(data_keys) ,) )
                         #print(f"Raw data shape:\t{np.shape(data_raw)}")
-                        for j in range( len( data_keys ) ):
-                            data_raw[:,j] = group[data_keys[j]][:]
+                        for j in range( len( to_keep ) ):
+                            if True:
+                                data_raw[:,j] = group[to_keep[j]][:]
+                        #mask = ~(np.all(data_raw == 0, axis=1) )#| np.isnan(data_raw).all(axis=1))
+                        #data_raw = data_raw[mask]
+                            
+                        
+                            
                     print("**Data pull complete**")
 
                     #
@@ -999,8 +1020,8 @@ class dataReader:
                     #
                     # Move data into dictionary
                     #
-                    for j in range( len( data_keys ) ):
-                        k = data_keys[j]
+                    for j in range( len( to_keep ) ):
+                        k = to_keep[j]
                         #print(f"Depositing data for keys {k}:")
                         #print(f"\t{data_array[i,:,j]}")
                         cls.data[k][i,:] = data_array[i,:,j]
@@ -1142,7 +1163,7 @@ class dataReader:
             
         
 
-    def hdf5Write( cls , filename , working_dir ):
+    def hdf5Write( cls , filename , working_dir, skip_headers=[] ):
         """
         This method writes cls.data to an *.h5 file.
 
@@ -1287,7 +1308,7 @@ class sweep(dataReader):
 
     """
 
-    def __init__(self, anchor, point_distribution, datafile, file_format="vtk", t_lims=None ):
+    def __init__(self, anchor, point_distribution, datafile, file_format="vtk", t_lims=None, store_anchors=True, offset=0 ):
         """
         Initialize the rake object according to the inputs to the file.
 
@@ -1327,13 +1348,259 @@ class sweep(dataReader):
         #
         # Define the points by anchor and point_distribution
         #
-        self.points = point_sweep( anchor, point_distribution )
+        self.points = point_sweep( anchor, point_distribution ) + offset
         self.points = np.swapaxes( self.points, 1, 2 )
         anchors = anchor.T[:, None, :] 
-        self.frozen_points = self.points - anchors
+        self.deltas = point_distribution
+        if store_anchors:
+            self.anchors = anchors
+        self.frozen_points = self.points - anchors - offset
         
         # Set the object to use time-dependent data
         self.time_dependent=True
+
+    def anchorCorrection(cls, data_dir, scanWindowWidth, N, rel_tol=1e-18, abs_tol=1e-9, read_method="hdf5dataread", 
+                         centering_method="edge", centering_header="Mach", input_args=(), iterations=1, iter_mult=2, 
+                         edge_dict={"method": "dwt", "wt_family": "bior1.3", "level": -1, "coeff_index": 0, "store_wavelet": True, "dims": ['t', 'y'] } ):
+        """
+            This method corrects the anchor points of the sweep by defined method.
+
+        Args:
+            data_dir (str): This is the directory where the data is located.
+
+            scanWindowWidth (float, width): The limits of the scan window that is used to find the 
+                                        correction. Note that these are inclusive limits. They are
+                                        in the format:
+
+                                        [min, max] for [x, y, z] coordinates.
+
+            rel_tol (float, optional):  The relative tolerance, or minimum change for the 
+                                        correction to continue for the centering. Defaults to 
+                                        1e-18.
+
+            abs_tol (float, optional):  The absolute tolerance, or maximum acceptable error for the
+                                        centering. Defaults to 1e-9.    
+
+            read_method (str, optional):    The method that the data is read by. The valid options
+                                            are:
+                                            
+                                            - "hdf5dataread" - The default method that reads
+                                                the data from the *.h5 files.
+                                            
+                                            These options are the names of the methods used to read
+                                            the data. Not case sensitive. Defaults to 
+                                            "hdf5dataread".
+
+            centering_method (str, optional):    The method that the centering is done by. The valid
+                                                    options are:
+
+                                                - *"edge" - The default method that uses an edge 
+                                                            finding method.
+                                                        
+                                                - "center" - The method that uses the center of the
+                                                            data to center the sweep.
+
+                                                Not case sensitive. Defaults to "edge".
+
+            centering_header (str, optional):    The header that is used to center the sweep. This
+                                                    is the header that is used to find the edge or
+                                                    center of the data. Defaults to "Mach".
+
+            input_args (tuple, optional):   The input arguments that are used to read the data on 
+                                            top of the data_dir.
+
+        """
+        print("Under construction.")
+
+        #
+        # Set up the correction data in a dictionary
+        #
+        cls.correction_dict = {}
+        cls.correction_dict["abs_tol"] = abs_tol
+        cls.correction_dict["rel_tol"] = rel_tol
+        cls.correction_dict["read_method"] = read_method.lower()
+        cls.correction_dict["centering_method"] = centering_method.lower()
+        cls.correction_dict["centering_header"] = centering_header
+        cls.correction_dict["scanWindowWidth"] = np.array( scanWindowWidth )
+        cls.correction_dict["N"] = N
+        cls.correction_dict["Iterations"] = iterations
+        cls.correction_dict["Iteration Multiplier"] = iter_mult
+
+        # Store the data directory
+        cls.data_dir = data_dir
+        cls.input_args = input_args
+        cls.edge_dict = edge_dict
+
+        # Back up the old points
+        cls.old_points = cls.points.copy()
+        cls.errors = []
+
+        #
+        # Correct the anchor points
+        #
+        if cls.correction_dict["centering_method"] in ["edge", 'e']:
+            for i in np.arange( cls.correction_dict["Iterations"] ):
+                if i>0:
+                    cls.correction_dict["scanWindowWidth"] = cls.correction_dict["scanWindowWidth"]/cls.correction_dict["Iteration Multiplier"]
+                cls.anchorCorr_xEdgeFind()
+            cls.edge_dict = edge_dict
+        else:
+            raise ValueError("Invalid centering method selected. Only 'edge' is currently supported.")
+        
+        #
+        # Re-do the sweep based on the correct anchor points
+        #
+        cls.points = point_sweep( cls.anchors[:,0,:].T, cls.deltas )
+        cls.points = np.swapaxes( cls.points, 1, 2 )
+        cls.newSweep()
+
+
+    def newSweep(cls ):
+        """
+            Calculate the new sweep.
+
+        """
+
+
+        #
+        # Create a new sweep along the span
+        #
+        if cls.correction_dict["read_method"]=="hdf5dataread":
+            input_args = ( cls.data_dir, ) + cls.input_args 
+            cls.hdf5DataRead( *input_args , dims=cls.dims )
+        else:
+            raise ValueError("Invalid read method selected. Only 'hdf5dataread' is currently supported.")
+
+    def anchorCorr_xEdgeFind(cls ):
+        """
+            This method corrects the anchor points of the sweep by edge detection. This is not
+        meant to be a standalone method, but rather a method that is used within the object by
+        anchorCorrection().
+
+        """
+        print("Under construction.")
+
+        # Calculate some important factors
+        w = cls.correction_dict["scanWindowWidth"]
+        cls.correction_dict["windowArcLength"] = np.linalg.norm( [ np.max(w[0]) - np.min(w[0]) , np.max(w[1]) - np.min(w[1]) , np.max(w[2]) - np.min(w[2]) ] )
+
+        #
+        # Define the scan area
+        #
+        belt = []
+        for i in range( len( cls.correction_dict["scanWindowWidth"] ) ):
+            belt += [ np.linspace( np.min( w[i] ) , np.max( w[i] ) , num=cls.correction_dict["N"] ) ]
+
+        belt = np.array( belt )
+        cls.correction_dict["belt"] = belt
+        # Find the span of points based on the minimum distance
+        span = point_sweep( np.squeeze( cls.anchors, axis=1 ).T , belt )
+        span = np.swapaxes( span, 1, 2 )
+        # Find the span of the points
+        cls.points = span
+
+        #
+        # Find the new sweep
+        #
+        cls.newSweep()
+
+        #
+        # Store the old data
+        #
+        cls.old_anchors = cls.anchors
+
+        #
+        # Find the edge in the data
+        #
+        if cls.edge_dict["method"] in ["wavelet", "dwt"]:
+            print("Using wavelet method to find the edge.")
+
+
+            # Initialize the compressible gas object and track the shock
+            from fluids import compressibleGas
+            cls.cmp = compressibleGas( dims=cls.edge_dict["dims"] )
+            new_shock_loc, _ = cls.cmp.shockTracking( cls.data, cls.points.T, cls.time_steps, key=cls.correction_dict["centering_header"], store_wavelet=True )
+            
+
+            # Now find where the shock is
+            if 'x' in cls.edge_dict["dims"]:
+                coords = cls.anchors[:,:,0].T
+            if 'y' in cls.edge_dict["dims"]:
+                coords = cls.anchors[:,:,1].T
+            shock_loc_error = np.linalg.norm( coords - new_shock_loc )
+            cls.old_shock_loc = cls.anchors
+            shock_loc = new_shock_loc
+            print(f"New shock location shape:\t{new_shock_loc[0].shape}")
+            if 'x' in cls.edge_dict["dims"]:
+                cls.anchors[:,:,0][:,0] = new_shock_loc[0]
+            if 'y' in cls.edge_dict["dims"]:
+                cls.anchors[:,:,1][:,0] = new_shock_loc[0]
+
+            """
+            import pywt
+
+            shock_loc = np.zeros( ( len( cls.time_steps ) , 3 ) )
+            shock_loc_error = np.zeros( len( cls.time_steps ) )
+            for i in range( len( cls.time_steps ) ):
+
+                #
+                # Calculate the wavelet transform
+                #
+                if cls.edge_dict["level"]==-1:
+                    decomp = pywt.wavedec( cls.data[cls.correction_dict["centering_header"]][i] , wavelet=cls.edge_dict["wt_family"] )
+                    
+                else:
+                    decomp = pywt.wavedec( cls.data[cls.correction_dict["centering_header"]][i] , wavelet=cls.edge_dict["wt_family"], level=cls.edge_dict["level"] )
+                if cls.edge_dict["store_wavelet"]:
+                    cls.correction_dict["wavelet_coeffs"] = decomp
+                
+                #
+                # Find the next best guess of a location of the shock
+                #
+                try:
+                    shock_loc_indx = np.nanargmax( decomp[cls.edge_dict["level"]][1:-1] )
+                    shock_loc[i] = cls.points[i, 2*(shock_loc_indx+1), :]
+                except:
+                    print(f"Shock location finding failed, { decomp[cls.edge_dict['level']][1:-1] }")
+                    shock_loc_indx = 0
+                    shock_loc[i] = cls.anchors[i]
+                shock_loc_error[i] = np.linalg.norm( cls.old_anchors[i] - shock_loc[i] )
+            #"""
+                
+            cls.shock_loc = shock_loc
+            cls.rel_error = shock_loc_error
+            cls.errors += [cls.rel_error]
+            
+
+
+
+        else:
+            raise ValueError("Invalid edge detection method selected. Only 'wavelet' is currently supported in the edge dictionary.")
+        
+
+
+    def frozenData(cls, lims=None ):
+        """
+            This method takes the data present and freezes it in time. The coordinate system for 
+        the data now is .frozen_points.
+
+        """
+
+        import scipy.stats as scst
+
+        cls.frozen_data = {}
+        cls.variance_data = {}
+        cls.kurtosis_data = {}
+        for i, k in enumerate( list( cls.data.keys() ) ):
+            if not lims:
+                cls.frozen_data[k] = np.mean( cls.data[k], axis=0 )
+                cls.variance_data[k] = np.var( cls.data[k], axis=0 )
+                cls.kurtosis_data[k] = scst.kurtosis( cls.data[k], axis=0 )
+            else:
+                cls.frozen_data[k] = np.mean( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
+                cls.variance_data[k] = np.var( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
+                cls.kurtosis_data[k] = scst.kurtosis( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
+        
 
 
 class rake(dataReader):
@@ -1669,7 +1936,7 @@ class structuredGrid(dataReader):
         super().__init__( [ X_flat, Y_flat, Z_flat ], datafile, file_format )
 
         # Move point data
-        self.points = [ X_flat, Y_flat, Z_flat ]
+        self.points = np.array([ X_flat, Y_flat, Z_flat ])
 
     def reform(cls ):
         """
@@ -1700,6 +1967,377 @@ class structuredGrid(dataReader):
             cls.points_gradients = np.asarray( [grad_raw[i][i] for i in range(3)] )
 
         # TODO: Fix this so that it take less memory
+
+
+class fullCV(dataReader):
+    """
+        This object deviates from the standard data reader to read the entire stored control volume.
+
+    """
+    def __init__(self, datafile, file_format="vtk" ):
+        """
+        Initialize the full CV object according to the inputs to the file.
+
+        Args:
+            points (float): This is a list/array of the points in the structured grid. The order
+                                will be (X, Y, Z). All three dimension are required. X, Y, and Z 
+                                are the points in a NumPy meshgrid() output-like format.
+
+            datafile (string):  The datafile with the CFD data.
+
+            file_format (string, optional): The file format that will be used. The valid options 
+                                                are:
+
+                                            - *"vtk" - The default *.vtk output as OpenFOAM 
+                                                        produces
+                                            
+                                            - "h5" - The *.h5 output that is defined by the 
+
+                                            - None - Take the file format from the "datafile"
+                                                        argument.
+        """
+
+        # Initialize the dataReader object to inherit
+        super().__init__( [[],[],[]], datafile, file_format )
+
+
+    def fullhdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="lin", coords_system=['x','y','z'], mp_method=None, headers_exclude=[] ):
+        """
+            This method takes the data from a *.h5 file or such and imports it using h5py rather 
+        than Paraview, which is very slow.
+
+            Note that the dimensions must match the dimension in the CFD analysis, not the data
+        object.
+
+        Args:
+            working_dir (string):   The directory to work the data from.
+
+            group_path (list, optional):    This list of groups to call, in order to reach data one
+                                                is looking for. Defaults to 
+                                                ["STREAM_00","CELL_CENTER_DATA"], which is the 
+                                                default for Converge's h5 files for the cell-
+                                                centered data. Note that this is case sensitive.
+
+            coord_prefix (string, optional):    The string that defines the prefix for the keys
+                                                    that define the coordinates. Case sensitive. 
+                                                    Defaults to "XCEN", which is the default for
+                                                    Converge's h5 files if the cell centers are
+                                                    exported.
+                                    
+            dims (char, optional):  The list of characters that define the dimensions. Defaults to
+                                        ['x', 'y', 'z']. Case sensitive.
+
+            interpolator (string, optional):    Which interpolating function will be used. The
+                                                    valid options are, not case sensitive:
+
+                                                - *"RBF":   The SciPy RBF (radial basis function)
+                                                                interpolator.
+
+                                                - "CT":     The SciPy CloughTocher2D interpolator.
+                                                                Note that this only works when
+                                                                N_dim=2.
+
+                                                - "Linear" or "Lin":    The SciPy linear 
+                                                                        interpolator. Uses Delaunay
+                                                                        triangulation.
+
+
+        """
+
+        import h5py as h5
+        import scipy.interpolate as sint
+
+        # Set number of dimension
+        N_dims = len( dims )
+        cls.N_dims = N_dims
+        cls.dims = dims
+
+        #
+        # Switch between interpolation reading and raw reading
+        #
+        if not cls.read_raw:
+
+            #
+            # Import time step from file format
+            #
+            cls.time_steps = np.zeros(len(cls.file_list))
+            print(f"Seeing {len(cls.time_steps)} time steps.")
+            if cls.file_format.lower()=="h5":
+                for i in range( len( cls.file_list ) ):
+                    fl_nm = cls.file_list[i]
+                    raw_name = fl_nm[:-3]
+                    time_value = raw_name.split('_')[1][1:]
+                    cls.time_steps[i] = float( time_value )
+                    #print(f"Time value at i={i}:\t{time_value}")
+            else:
+                raise ValueError("Invalid file format for the method requested.")
+            # Filter time steps as needed
+            if not cls.t_lims is None:
+                filtered_inidices = [i for i in range(len(cls.time_steps)) if cls.time_steps[i]>=np.min(cls.t_lims) and cls.time_steps[i]<=np.max(cls.t_lims)]
+                print(f"Filtered indices:\t{filtered_inidices}")
+                time_steps_filt = [cls.time_steps[i] for i in filtered_inidices]
+                cls.file_list = [cls.file_list[i] for i in filtered_inidices]
+                cls.time_steps = time_steps_filt
+                print(f"Time steps filtered to:\t{cls.time_steps}")
+                print(f"Which is {len(cls.time_steps)} time steps.")
+
+            #
+            # Initialize our data
+            #
+            data_file_path = "/".join(group_path)
+            with h5.File( cls.file_list[1], 'r') as f:
+                group = f[data_file_path]
+                keys = list(group.keys())
+                data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+            cls.data={}
+            for k in data_keys:
+                cls.data[k]=[]
+            
+            # Find the number of non-excluded headers
+            to_keep = np.setdiff1d(data_keys, headers_exclude)
+            keep_count = to_keep.size
+            cls.to_keep = to_keep
+
+            #
+            # Go through the time steps and interpolate the data
+            #
+            if not mp_method:
+                for i in range( len(cls.time_steps) ):
+                    print(f"Working on data index:\t{i}")
+                    fl_nm = cls.file_list[i]
+                    print(f"Working with file:\t{fl_nm}")
+                    t_step = cls.time_steps[i]
+
+
+                    #
+                    # Set up the coordinates into numpy array/matrices, if time dependent
+                    #
+                    if cls.time_dependent:
+                        obj_coordinates = cls.points[i,:,:N_dims]
+                        cls.obj_coordinates = obj_coordinates
+                        """
+                        # Initialize our data
+                        data_file_path = "/".join(group_path)
+                        with h5.File( cls.file_list[1], 'r') as f:
+                            group = f[data_file_path]
+                            keys = list(group.keys())
+                            data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+                        data_array = np.zeros( ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,) + ( len(data_keys) ,) )
+                        #print(f"Data array shape is {np.shape(data_array)}")
+                        cls.data={}
+                        for k in data_keys:
+                            cls.data[k] = np.zeros( ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,) )
+                        #"""
+
+                    #
+                    # Open the h5 file and deposit data
+                    #
+                    with h5.File( fl_nm, 'r') as f:
+
+                        # Pull the data into the group
+                        group = f[data_file_path]
+
+                        # Get the keys within the group
+                        keys = list(group.keys())
+                        print(f"Keys available:\t{keys}")
+
+                        # Pull the cell center data
+                        coord_keys_raw = [key for key in keys if key.startswith("XCEN")]
+                        coord_keys = []
+                        for c in coord_keys_raw:
+                            if c[-1].lower() in dims:
+                                coord_keys += [c]
+                        #print(f"The coordinate keys are:\t{coord_keys}")
+                        coordinates = np.zeros( (N_dims ,) + ( len( group[coord_keys[0]] ) ,) ).T
+                        #print(f"Coordinates have shape:\t{np.shape(coordinates)}")
+                        for j in range( N_dims ):
+                            coordinates[:,j] = group[coord_keys[j]][:]
+                        cls.coordinates = coordinates
+
+                        # Store the data into an array for interpolation
+                        data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+                        #print(f"The data keys are:\t{data_keys}")
+                        data_raw = np.zeros( ( len( group[coord_keys[0]] ) ,) + ( len(data_keys) ,) )
+                        #print(f"Raw data shape:\t{np.shape(data_raw)}")
+                        for j in range( len( to_keep ) ):
+                            if True:
+                                data_raw[:,j] = group[to_keep[j]][:]
+                        #mask = ~(np.all(data_raw == 0, axis=1) )#| np.isnan(data_raw).all(axis=1))
+                        #data_raw = data_raw[mask]
+                            
+                    print("**Data pull complete**")
+
+                    #
+                    # Move data into dictionary
+                    #
+                    for j in range( len( to_keep ) ):
+                        k = to_keep[j]
+                        #print(f"Depositing data for keys {k}:")
+                        #print(f"\t{data_array[i,:,j]}")
+                        cls.data[k] += [data_raw[:,j]]
+                        #print(f"\t{cls.data[k]}")
+                        #print(f"\tMin Data:\t{np.min(cls.data[k][i,...])}")
+                        #print(f"\tMax Data:\t{np.max(cls.data[k][i,...])}")
+                        #print(f"\tMean Data:\t{np.mean(cls.data[k][i,...])}")
+
+            else:
+                raise ValueError("Invalid multiprocessing method chosen.")
+            
+        else:
+
+            #
+            # Import time step from file format
+            #
+            cls.time_steps = np.zeros(len(cls.file_list))
+            print(f"Seeing {len(cls.time_steps)} time steps.")
+            if cls.file_format.lower()=="h5":
+                for i in range( len( cls.file_list ) ):
+                    fl_nm = cls.file_list[i]
+                    raw_name = fl_nm[:-3]
+                    time_value = raw_name.split('_')[1][1:]
+                    cls.time_steps[i] = float( time_value )
+                    #print(f"Time value at i={i}:\t{time_value}")
+            else:
+                raise ValueError("Invalid file format for the method requested.")
+            # Filter time steps as needed
+            if not cls.t_lims is None:
+                filtered_inidices = [i for i in range(len(cls.time_steps)) if cls.time_steps[i]>=np.min(cls.t_lims) and cls.time_steps[i]<=np.max(cls.t_lims)]
+                print(f"Filtered indices:\t{filtered_inidices}")
+                time_steps_filt = [cls.time_steps[i] for i in filtered_inidices]
+                cls.file_list = [cls.file_list[i] for i in filtered_inidices]
+                cls.time_steps = time_steps_filt
+                print(f"Time steps filtered to:\t{cls.time_steps}")
+                print(f"Which is {len(cls.time_steps)} time steps.")
+
+            #
+            # Set up the coordinates into numpy array/matrices, if not time dependent
+            #
+            data_file_path = "/".join(group_path)
+            if not cls.time_dependent:
+                with h5.File( cls.file_list[0], 'r') as f:
+
+                    # Pull the data into the group
+                    group = f[data_file_path]
+
+                    # Get the keys within the group
+                    keys = list(group.keys())
+                    #print(f"Keys available:\t{keys}")
+
+                    # Pull the cell center data
+                    coord_keys_raw = [key for key in keys if key.startswith("XCEN")]
+                    coord_keys = []
+                    for c in coord_keys_raw:
+                        if c[-1].lower() in dims:
+                            coord_keys += [c]
+                    #print(f"The coordinate keys are:\t{coord_keys}")
+                    coordinates = np.zeros( (N_dims ,) + ( len( group[coord_keys[0]] ) ,) ).T
+                    #print(f"Coordinates have shape:\t{np.shape(coordinates)}")
+                    for j in range( N_dims ):
+                        coordinates[:,j] = group[coord_keys[j]][:]
+                    cls.points = coordinates
+                data_shape = ( len(cls.time_steps) ,) + ( len( coordinates[:,0] ) ,)
+            else:
+                data_shape = ( len(cls.time_steps) ,) + ( len( cls.points[0] ) ,)
+
+            # Initialize our data
+            data_file_path = "/".join(group_path)
+            with h5.File( cls.file_list[1], 'r') as f:
+                group = f[data_file_path]
+                keys = list(group.keys())
+                data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+            data_array = np.zeros( data_shape + ( len(data_keys) ,) )
+            #print(f"Data array shape is {np.shape(data_array)}")
+            cls.data={}
+            for k in data_keys:
+                cls.data[k] = np.zeros( data_shape )
+
+            #
+            # Go through the time steps and interpolate the data
+            #
+            for i in range( len(cls.time_steps) ):
+                print(f"Working on data index:\t{i}")
+                fl_nm = cls.file_list[i]
+                print(f"Working with file:\t{fl_nm}")
+                t_step = cls.time_steps[i]
+
+                #
+                # Open the h5 file and deposit data
+                #
+                with h5.File( fl_nm, 'r') as f:
+
+                    # Pull the data into the group
+                    data_file_path = "/".join(group_path)
+                    group = f[data_file_path]
+
+                    # Get the keys within the group
+                    keys = list(group.keys())
+                    #print(f"Keys available:\t{keys}")
+
+                    # Pull the cell center data
+                    coord_keys_raw = [key for key in keys if key.startswith("XCEN")]
+                    coord_keys = []
+                    for c in coord_keys_raw:
+                        if c[-1].lower() in dims:
+                            coord_keys += [c]
+                    #print(f"The coordinate keys are:\t{coord_keys}")
+                    coordinates = np.zeros( (N_dims ,) + ( len( group[coord_keys[0]] ) ,) ).T
+                    #print(f"Coordinates have shape:\t{np.shape(coordinates)}")
+                    for j in range( N_dims ):
+                        coordinates[:,j] = group[coord_keys[j]][:]
+                    cls.coordinates = coordinates
+
+                    # Store the data into an array for interpolation
+                    data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+                    #print(f"The data keys are:\t{data_keys}")
+                    data_raw = np.zeros( ( len( group[coord_keys[0]] ) ,) + ( len(data_keys) ,) )
+                    #print(f"Raw data shape:\t{np.shape(data_raw)}")
+                    for j in range( len( data_keys ) ):
+                        data_raw[:,j] = group[data_keys[j]][:]
+                print("**Data pull complete**")
+
+                #
+                # Move data into dictionary
+                #
+                for j in range( len( data_keys ) ):
+                    k = data_keys[j]
+                    #print(f"Depositing data for keys {k}:")
+                    #print(f"\t{data_array[i,:,j]}")
+                    cls.data[k][i,:] = data_raw[:,j]
+                    #print(f"\t{cls.data[k]}")
+                    #print(f"\tMin Data:\t{np.min(cls.data[k][i,...])}")
+                    #print(f"\tMax Data:\t{np.max(cls.data[k][i,...])}")
+                    #print(f"\tMean Data:\t{np.mean(cls.data[k][i,...])}")
+
+
+    def volumeIntegrals(cls ):
+        """
+            This method calculates CV integrals that are useful to evaluate the CFD validity.
+
+        """
+
+        # Initialize the time integrals
+        cls.volume_integrals = {}
+        cls.volume_integrals["Mass"] = np.zeros( len( cls.time_steps ) )
+        cls.volume_integrals["Internal Energy"] = np.zeros( len( cls.time_steps ) )
+        cls.volume_integrals["Enthalpy"] = np.zeros( len( cls.time_steps ) )
+
+        # Calculate time integrals
+        for i, t in enumerate( cls.time_steps ):
+            cls.volume_integrals["Mass"][i] = np.sum( cls.data["MASS"][i] )
+            cls.volume_integrals["Internal Energy"][i] = np.sum( cls.data["MASS"][i] * cls.data["SIE"][i] )
+            cls.volume_integrals["Enthalpy"][i] = cls.volume_integrals["Internal Energy"][i] + np.sum( cls.data["PRESSURE"][i] * cls.data["VOLUME"][i] )
+
+
+        # Calculate rates
+        cls.volume_integral_rates = {}
+        cls.volume_integral_rates["Mass Generation"] = np.gradient( cls.volume_integrals["Mass"], cls.time_steps )
+        cls.volume_integral_rates["Normalized Mass Generation"] = cls.volume_integral_rates["Mass Generation"] / cls.volume_integrals["Mass"]
+        cls.volume_integral_rates["Energy Generation"] = np.gradient( cls.volume_integrals["Enthalpy"], cls.time_steps )
+
+
+
+
+
     
 
     

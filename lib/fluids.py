@@ -217,7 +217,8 @@ class compressibleGas:
         print("compressibleGas object created.")
 
     def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3", 
-                      level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=[" "], filter_nan=True, gradient_order=None ):
+                      level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=[" "], 
+                      filter_nan=True, gradient_order=None, window_lims=2 ):
         """
             In this method, the presence of a shock will be tracked throughout time. The method
         uses the Discrete Wavelet Transform to track the discontinuity. 
@@ -264,24 +265,30 @@ class compressibleGas:
             swt = shock_wavelet
 
         # Perform the wavelet transform on the data with the specified keys
+        if 't' in cls.dims:
+            swt.N_dims -= 1
         swt.waveletTransform([wt_family], keys=[key] )
+
+        # Find the domain that represents the DWT
         used_domain = []
         if 't' in cls.dims:
             used_domain += [input_time_domain]
+            swt.N_dims += 1
         if 'x' in cls.dims:
             used_domain += [input_spatial_domain[0]]
         if 'y' in cls.dims: 
             used_domain += [input_spatial_domain[1]]
         if 'z' in cls.dims:
             used_domain += [input_spatial_domain[2]]
+        cls.used_domain = used_domain
         swt.domains( used_domain )
 
         # Find the index of the shock location on a spatial domain that corresponds to the original 
         # data, but with the shape of the wavelet coefficients
         if filter_nan:
-            cls.shock_loc_indx = np.nanargmax( np.abs( swt.coeffs[wt_family][key][level][coeff_index] ) , axis=-1 )
+            cls.shock_loc_indx = np.nanargmax( np.abs( np.array(swt.coeffs[wt_family][key][level])[:,window_lims:-window_lims] ) , axis=-1 )+window_lims
         else:
-            cls.shock_loc_indx = np.argmax( np.abs( swt.coeffs[wt_family][key][level][coeff_index] ) , axis=-1 )
+            cls.shock_loc_indx = np.argmax( np.abs( np.array(swt.coeffs[wt_family][key][level])[:,window_lims:-window_lims] ) , axis=-1 )+window_lims
 
         # Set up alternative domain
         cls.shock_loc = []
@@ -290,13 +297,13 @@ class compressibleGas:
             cls.x_pts = swt.domain[level][cls.dims.index('x')]
             cls.shock_loc += [cls.x_pts[cls.shock_loc_indx]]
         if 'y' in cls.dims:
-            cls.y_pts = swt.domain[level][cls.dims.index('y')]
+            cls.y_pts = swt.domain[cls.dims.index('y')][level]
             cls.shock_loc += [cls.y_pts[cls.shock_loc_indx]]
         if 'z' in cls.dims:
             cls.z_pts = swt.domain[level][cls.dims.index('z')]
             cls.shock_loc += [cls.z_pts[cls.shock_loc_indx]]
         if 't' in cls.dims:
-            cls.t_pts = swt.domain[level][cls.dims.index('t')]
+            cls.t_pts = input_time_domain
 
         # Calculate the shock velocity
         if 't' in cls.dims:
