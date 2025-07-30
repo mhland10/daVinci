@@ -812,7 +812,7 @@ class dataReader:
         # Return to original directory
         os.chdir(og_dir)
 
-    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="lin", coords_system=['x','y','z'], mp_method=None, headers_exclude=[] ):
+    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="lin", coords_system=['x','y','z'], mp_method=None, headers_exclude=[], verbosity=1 ):
         """
             This method takes the data from a *.h5 file or such and imports it using h5py rather 
         than Paraview, which is very slow.
@@ -933,10 +933,12 @@ class dataReader:
             #
             if not mp_method:
                 for i in range( len(cls.time_steps) ):
-                    print(f"Working on data index:\t{i}")
+                    
                     fl_nm = cls.file_list[i]
-                    print(f"Working with file:\t{fl_nm}")
                     t_step = cls.time_steps[i]
+                    if verbosity>0:
+                        print(f"Working on data index:\t{i}")
+                        print(f"Working with file:\t{fl_nm}")
 
 
                     #
@@ -969,7 +971,8 @@ class dataReader:
 
                         # Get the keys within the group
                         keys = list(group.keys())
-                        print(f"Keys available:\t{keys}")
+                        if verbosity>1:
+                            print(f"Keys available:\t{keys}")
 
                         # Pull the cell center data
                         coord_keys_raw = [key for key in keys if key.startswith("XCEN")]
@@ -996,8 +999,8 @@ class dataReader:
                         #data_raw = data_raw[mask]
                             
                         
-                            
-                    print("**Data pull complete**")
+                    if verbosity>1:
+                        print("**Data pull complete**")
 
                     #
                     # Do the interpolation
@@ -1015,7 +1018,8 @@ class dataReader:
                     #print(f"Original data:\t{data_raw}")
                     #print(f"New data:\t{data_interpolator_raw}")
                     data_array[i,...] = data_interpolator_raw
-                    print("**Interpolation complete**")
+                    if verbosity>1:
+                        print("**Interpolation complete**")
 
                     #
                     # Move data into dictionary
@@ -1938,7 +1942,7 @@ class structuredGrid(dataReader):
         # Move point data
         self.points = np.array([ X_flat, Y_flat, Z_flat ])
 
-    def reform(cls ):
+    def reform(cls, verbosity=0 ):
         """
             This method puts the data back in the shape of the input points to make grid 
         calculations easier.
@@ -1948,7 +1952,8 @@ class structuredGrid(dataReader):
         reform_shape = ( ( len( cls.time_steps ) ,) + cls.points_shape )
 
         for k in list( cls.data.keys() ):
-            print(f"Looking at key {k}")
+            if verbosity>0:
+                print(f"Re-forming key {k}")
             cls.data[k] = np.reshape( cls.data[k], reform_shape )
 
 
@@ -1967,6 +1972,61 @@ class structuredGrid(dataReader):
             cls.points_gradients = np.asarray( [grad_raw[i][i] for i in range(3)] )
 
         # TODO: Fix this so that it take less memory
+
+    def timeIntegration(cls, ti_lims=None ):
+
+        cls.data_timeIntegrated = {}
+        for i, k in enumerate( list( cls.data.keys() ) ):
+            if not ti_lims:
+                cls.data_timeIntegrated[k] = np.trapz( cls.data[k], cls.time_steps, axis=0 )
+            else:
+                cls.data_timeIntegrated[k] = np.trapz( cls.data[k][np.min(ti_lims):np.max(ti_lims)], cls.time_steps[np.min(ti_lims):np.max(ti_lims)], axis=0 )
+            
+
+    def writeImage(cls, working_dir, write_timeIntegration=True, write_keys=None ):
+
+        import matplotlib.pyplot as plt
+
+        os.chdir( working_dir )
+
+        if write_timeIntegration:
+            for i, k in enumerate( list( cls.data.keys() ) ):
+                if not write_keys:
+                    plt.imsave( f"output_timeIntegration_{k}.png", cls.data_timeIntegrated[k], cmap="gray" )
+                elif k in write_keys:
+                    plt.imsave( f"output_timeIntegration_{k}.png", cls.data_timeIntegrated[k], cmap="gray" )
+
+
+    def cellMeasurement(cls, working_dir, image_prefix, data_keys=None, debug=1 ):
+
+        from external.soot_foil_image_tool import measure_image
+        import glob, os
+        from natsort import natsorted
+        
+        # Move to the directory and pull all the images
+        os.chdir( working_dir )
+        img_paths = natsorted( glob.glob( f"{image_prefix}*" ) )
+        print(f"Seeing {img_paths} available")
+
+        # Calculate the bounds that the image represents
+        Dx = np.max( cls.points_input[0] ) - np.min( cls.points_input[0] )
+        Dy = np.max( cls.points_input[1] ) - np.min( cls.points_input[1] )
+
+        # Read the image
+        cls.annotateds = []
+        cls.measurements = []
+        for i, img in enumerate( img_paths ):
+            annotated, measurement = measure_image( img, 'w', Dy*100, debug=debug, verbosity=2 )
+            cls.annotateds += [annotated]
+            cls.measurements += [measurement/100]
+
+
+
+
+
+
+
+
 
 
 class fullCV(dataReader):
