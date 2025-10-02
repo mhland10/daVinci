@@ -625,7 +625,7 @@ def measure_image(image_path, dimension, size, step=10, debug=0, min_area_input=
     max_area_candidate = int(height * width / divisor_of_max_area_input)
     pbar = tqdm(range(0, max_area_candidate, step), desc="Min. Area Optimization")
     for m in pbar:
-        if verbosity>1:
+        if verbosity>3:
             print(f"\tProgress bar iteration:\t{m}")
         area_list, extLeft_list, extRight_list, extTop_list, extBot_list, Loss = detect_contours_in_image(
             image, morphology_image, height, width, flag_height, flag_width, m, max_area_candidate)
@@ -691,16 +691,22 @@ def measure_image(image_path, dimension, size, step=10, debug=0, min_area_input=
     # print_info(f'Runtime: {runtime:.2f} seconds')
 
     # Draw junctions using the optimal parameters
+    if verbosity>0:
+        print("Starting contour detection")
     area_list, extLeft_list, extRight_list, extTop_list, extBot_list, Loss = detect_contours_in_image(
         image, morphology_image, height, width, flag_height, flag_width, opt_min_area, opt_max_area)
     junction_list, r_crit, jun_num = is_junction(extLeft_list, extRight_list, extTop_list, extBot_list, area_list,
                                                  opt_min_area)
     image_annotated, _ = draw_circle_for_each_junction(image, junction_list, int(r_crit))
+    if verbosity>0:
+        print("Contour detection complete")
 
     # Draw contours using the optimal parameters
     draw_contours_in_image(image, morphology_image, height, width, flag_height, flag_width, opt_min_area, opt_max_area)
 
     # Get final measurement values and draw arrows, etc.
+    if verbosity>0:
+        print("Drawing final image")
     l_abs_values, l_euclidean_values, w_abs_values, w_euclidean_values = get_final_image(
         image_copy, color_left, color_right, color_top, color_bot,
         color_line_left_right, color_line_top_bottom, thickness_dot - 1, thickness_line, height, width,

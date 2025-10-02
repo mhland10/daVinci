@@ -272,7 +272,7 @@ class compressibleGas:
         # Find the domain that represents the DWT
         used_domain = []
         if 't' in cls.dims:
-            used_domain += [input_time_domain]
+            used_domain += [np.array(input_time_domain)]
             swt.N_dims += 1
         if 'x' in cls.dims:
             used_domain += [input_spatial_domain[0]]

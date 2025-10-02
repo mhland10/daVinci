@@ -148,7 +148,8 @@ class dataReader:
         # Set the time limits
         self.t_lims = t_lims
 
-    def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, headers_read=None ):
+    def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
+                     coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, headers_read=None ):
         """
             This reader reads an OpenFOAM case using Paraview
 
@@ -580,7 +581,10 @@ class dataReader:
             N_cores (string, optional): The number of processes that multiprocessing can use.
 
         """
-
+        # Get original directory
+        og_dir = os.getcwd()
+        
+        # Import needed modules
         import paraview.simple as pasi
         import pandas as pd
         if not accelerator:
@@ -590,6 +594,9 @@ class dataReader:
         else:
             raise ValueError( "Invalid accelerator engine selected" )
         
+        # Move to the working directory
+        os.chdir( working_dir )
+        
         # Load the data from the files
         cls.data = pasi.CONVERGECFDReader(FileName=cls.file_list[0])
         cls.data.SMProxy.SetAnnotation("ParaView::Name", "MyData")
@@ -598,9 +605,6 @@ class dataReader:
         # Get available time steps
         cls.time_steps = cls.data.TimestepValues
         print(f"Time steps available: {cls.time_steps}")
-
-        # Get original directory
-        og_dir = os.getcwd()
 
         # Set up data dictionary
         cls.data = {}
@@ -1162,11 +1166,6 @@ class dataReader:
                     #print(f"\tMax Data:\t{np.max(cls.data[k][i,...])}")
                     #print(f"\tMean Data:\t{np.mean(cls.data[k][i,...])}")
 
-
-
-            
-        
-
     def hdf5Write( cls , filename , working_dir, skip_headers=[] ):
         """
         This method writes cls.data to an *.h5 file.
@@ -1594,18 +1593,19 @@ class sweep(dataReader):
 
         cls.frozen_data = {}
         cls.variance_data = {}
+        cls.skewness_data = {}
         cls.kurtosis_data = {}
         for i, k in enumerate( list( cls.data.keys() ) ):
             if not lims:
                 cls.frozen_data[k] = np.mean( cls.data[k], axis=0 )
                 cls.variance_data[k] = np.var( cls.data[k], axis=0 )
+                cls.skewness_data[k] = scst.skew( cls.data[k], axis=0 )
                 cls.kurtosis_data[k] = scst.kurtosis( cls.data[k], axis=0 )
             else:
                 cls.frozen_data[k] = np.mean( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
                 cls.variance_data[k] = np.var( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
+                cls.skewness_data[k] = scst.skew( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
                 cls.kurtosis_data[k] = scst.kurtosis( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
-        
-
 
 class rake(dataReader):
     """
@@ -2021,13 +2021,445 @@ class structuredGrid(dataReader):
             cls.measurements += [measurement/100]
 
 
+class particles_EulerLagrange(dataReader):
+    """
+        This object is meant to handle the behavior of particles that are present in a simulation
+    using an Euler-Lagrange approach.
+
+    """
+    def __init__(self, datafile, file_format="vtk", data_directory=None ):
+        """
+        Initialize the particles object according to the inputs to the file.
+
+        Note that we do not have a set of points yet, as these will come from the particle
+        locations. 
+
+        Args:
+            datafile (string):  The datafile with the CFD data.
+
+            file_format (string, optional): The file format that will be used. The valid options 
+                                                are:
+
+                                            - *"vtk" - The default *.vtk output as OpenFOAM 
+                                                        produces
+                                            
+                                            - "h5" - The *.h5 output that is defined by the 
+
+                                            - None - Take the file format from the "datafile"
+                                                        argument.
+        """
+        # If a data directory is given, move to it
+        if data_directory:
+            og_dir = os.getcwd()
+            os.chdir( data_directory )
+            self.data_dir = data_directory   
+
+        # Initialize the dataReader object to inherit
+        super().__init__( [[],[],[]], datafile, file_format )
+
+        # Move back to the original directory
+        if data_directory:
+            os.chdir( og_dir )
+
+    def convergeParticleReader(cls, working_dir, accelerator=None, group_path=["STREAM_00","PARCEL_DATA","LIQUID_PARCEL_DATA"], particle_prefix="LIQPARCEL" ):        
+        """
+            This method reads the particle data from a Converge simulation output file set. The
+        default arguments are to be as close to Converge's default output as possible.
+
+        Args:
+            working_dir (string):   The directory to work the data from.
+
+            accelerator (string, optional):    The accelerator that will be used to speed up
+                                                    interpolation. The valid options are:
+
+                                                - *None:   The default option that uses SciPy
+                                                            interpolation.
+
+                                                - "cuda" or "cupy" or "cu" or "c":   The
+                                                            option that uses CuPy to accelerate the
+                                                            interpolation. Note that this requires
+                                                            a CUDA-capable GPU and the proper
+                                                            installation of CuPy with CUDA
+                                                            support.
+
+        """
+
+        print("Under construction.")
+
+        # Get the original directory
+        og_dir = os.getcwd()
+
+        # Import the needed libraries
+        import paraview.simple as pasi
+        import pandas as pd
+        import h5py as h5
+        if not accelerator:
+            import scipy.interpolate as sint
+        elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
+            import cupyx.scipy.interpolate as sint
+        else:
+            raise ValueError( "Invalid accelerator engine selected" )
+        
+        # Move to the working directory
+        os.chdir( working_dir )
+        
+        # Load the data from the files
+        cls.data_sv = pasi.CONVERGECFDReader(FileName=cls.file_list[0])
+        cls.data_sv.SMProxy.SetAnnotation("ParaView::Name", "MyData")
+        print("Available data attributes:\t"+str(dir(cls.data_sv)))
+
+        # Get available time steps
+        cls.time_steps = cls.data_sv.TimestepValues
+        print(f"Time steps available: {cls.time_steps}")
+
+        # Iterate over the time steps and pull the data from the h5 files
+        for i, t in enumerate( cls.time_steps ):
+            print(f"Reading time step {t:.3e} at index {i}")
+
+            # Set the data path
+            dataPath = ""
+            for gp in group_path:
+                dataPath += f"{gp}/"
+            dataPath = dataPath[:-1]
+            print(f"Data path:\t{dataPath}")
+
+            # Initialize the data dictionary, if first time step
+            if i==0:
+                cls.data = {}
+
+                # We will initialize the data keys from the first file and the first parcel 
+                #   available
+                with h5.File( cls.file_list[i], 'r') as f:
+                    dset = f[dataPath]
+                    pkeys = list(dset.keys())
+                    #print(f"Parcel keys available:\t{pkeys}")
+
+                    dkeys = list(dset[pkeys[0]].keys())
+                    #print(f"Data keys available:\t{dkeys}")
+                    for dk in dkeys:
+                        cls.data[dk] = [[]]
+            else:
+                for dk in list(cls.data.keys()):
+                    cls.data[dk] += [[]]
+
+            
+
+            # Pull data into the data dictionary
+            """
+                Note the heirarchy of the data is as follows:
+            [data key][time step][parcel ID/number]
+
+            """
+            with h5.File( cls.file_list[i], 'r') as f:
+                dset = f[dataPath]
+                pkeys = list(dset.keys())
+                #print(f"Parcel keys available:\t{pkeys}")
+                
+                for pk in pkeys:
+                    data_set = dset[pk]
+                    #print(f"Data set keys available for parcel {pk}:\t{list(data_set.keys())}")
+                    for dk in list( cls.data.keys() ):
+                        raw_data = data_set[dk][:]
+                        #print(f"\tData key {dk} has shape {np.shape(raw_data)}")
+                        #print(f"\tData key {dk} has data {raw_data}")
+                        if np.shape(raw_data)[0]==1:
+                            cls.data[dk][i] += raw_data.tolist()
+                        else:
+                            cls.data[dk][i] += raw_data.tolist()
+
+        # Move back to the original directory
+        os.chdir( og_dir )
 
 
+    def convergeSurroundingsReader(cls, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="PARCEL_", source_coord_prefix="XCEN_", dims=['x','y','z'], interpolator="lin", coords_system=['x','y','z'], mp_method=None, headers_exclude=[], verbosity=1, neighbors=1000, store_source_data=False ):
+        """
+            This method finds the data for the surroundings of the particles in a Converge 
+        simulation. This is largely a clone of hdf5DataRead from dataReader, but modified for the
+        different data structure.
+
+        Args:
+            working_dir (string):   The directory to work the data from.
+
+            group_path (list, optional):    This list of groups to call, in order to reach data one
+                                                is looking for. Defaults to 
+                                                ["STREAM_00","CELL_CENTER_DATA"], which is the 
+                                                default for Converge's h5 files for the cell-
+                                                centered data. Note that this is case sensitive.
+
+            coord_prefix (string, optional):    The string that defines the prefix for the keys
+                                                    that define the coordinates. Case sensitive. 
+                                                    Defaults to "XCEN", which is the default for
+                                                    Converge's h5 files if the cell centers are
+                                                    exported.
+                                    
+            dims (char, optional):  The list of characters that define the dimensions. Defaults to
+                                        ['x', 'y', 'z']. Case sensitive.
+
+            interpolator (string, optional):    Which interpolating function will be used. The
+                                                    valid options are, not case sensitive:
+
+                                                - *"RBF":   The SciPy RBF (radial basis function)
+                                                                interpolator.
+
+                                                - "CT":     The SciPy CloughTocher2D interpolator.
+                                                                Note that this only works when
+                                                                N_dim=2.
+
+                                                - "Linear" or "Lin":    The SciPy linear 
+                                                                        interpolator. Uses Delaunay
+                                                                        triangulation.
 
 
+        """
+        og_dir = os.getcwd()
+        os.chdir( cls.data_dir )
+
+        import h5py as h5
+        import scipy.interpolate as sint
+
+        # Set number of dimension
+        N_dims = len( dims )
+        cls.N_dims = N_dims
+        cls.dims = dims
 
 
+        #
+        # Import time step from file format
+        #
+        cls.time_steps = np.zeros(len(cls.file_list))
+        print(f"Seeing {len(cls.time_steps)} time steps.")
+        if cls.file_format.lower()=="h5":
+            for i in range( len( cls.file_list ) ):
+                fl_nm = cls.file_list[i]
+                raw_name = fl_nm[:-3]
+                time_value = raw_name.split('_')[1][1:]
+                cls.time_steps[i] = float( time_value )
+                #print(f"Time value at i={i}:\t{time_value}")
+        else:
+            raise ValueError("Invalid file format for the method requested.")
+        # Filter time steps as needed
+        if not cls.t_lims is None:
+            filtered_inidices = [i for i in range(len(cls.time_steps)) if cls.time_steps[i]>=np.min(cls.t_lims) and cls.time_steps[i]<=np.max(cls.t_lims)]
+            print(f"Filtered indices:\t{filtered_inidices}")
+            time_steps_filt = [cls.time_steps[i] for i in filtered_inidices]
+            cls.file_list = [cls.file_list[i] for i in filtered_inidices]
+            cls.time_steps = time_steps_filt
+            print(f"Time steps filtered to:\t{cls.time_steps}")
+            print(f"Which is {len(cls.time_steps)} time steps.")
+        
+        #
+        # Set up the coordinates into the list that corresponds to the data structure
+        #
+        parcel_coords = []
+        cls.coords_list = [
+                            cls.data[coord_key] 
+                            for coord_key in cls.data.keys() 
+                            if coord_prefix in coord_key
+                        ]
 
+
+        # Initialize our data
+        data_file_path = "/".join(group_path)
+        with h5.File( cls.file_list[1], 'r') as f:
+            group = f[data_file_path]
+            keys = list(group.keys())
+            data_keys = [key for key in keys if not key.startswith(coord_prefix)]
+        print(f"Working with data keys:\t{data_keys}")
+        
+        # Find the number of non-excluded headers
+        to_keep = np.setdiff1d(data_keys, headers_exclude)
+        keep_count = to_keep.size
+        cls.to_keep = to_keep
+
+        # Initialize data dictionary for surrounding data
+        cls.data_surrounding = {}
+        for k in data_keys:
+            cls.data_surrounding[k] = []
+            for i in range( len( cls.time_steps) ):
+                cls.data_surrounding[k] += [[]]
+                for j in range( len( cls.data[ list(cls.data.keys())[0] ][i] ) ):
+                    cls.data_surrounding[k][i] += [0]
+
+        #
+        #   Iterate through the time steps and pull the data
+        #
+        cls.og_data = {}
+        cls.data_sources = []
+        for i in range( len( cls.time_steps) ):
+            print(f"Reading time step {cls.time_steps[i]:.3e} at index {i}")
+
+            # Pull data into source data matrix
+            #source_data = np.zeros( ( len( list(cls.data.keys()) ) ,) + )
+            
+            #
+            # Get the coordinates of the parcels at this time step
+            #
+            N_parcels = len( cls.data[ list(cls.data.keys())[0] ][i] )
+            target_coords = np.zeros( ( N_parcels, 3) )
+            for j in range( N_parcels ):
+                print(f"\tReading parcel {j+1} of {N_parcels}")
+                
+                target_coords[j,0] = cls.data[coord_prefix+"X"][i][j]
+                target_coords[j,1] = cls.data[coord_prefix+"Y"][i][j]
+                target_coords[j,2] = cls.data[coord_prefix+"Z"][i][j]
+
+            if N_parcels>0:
+                #
+                # Get the source coordinates and data
+                #
+                with h5.File( cls.file_list[i], 'r') as f:
+                    group = f[data_file_path]
+                    keys = list(group.keys())
+                    #print(f"Available groups:\t{keys}")
+                    N_source_points =  len( group[ source_coord_prefix+"X" ][:] )
+                    source_coords = np.zeros( ( len( cls.coords_list ) , N_source_points ) ).T
+                    source_coords[:,0] = group[ source_coord_prefix+"X" ][:]
+                    source_coords[:,1] = group[ source_coord_prefix+"Y" ][:]
+                    source_coords[:,2] = group[ source_coord_prefix+"Z" ][:]                
+                    
+                    # Pull the data to interpolate
+                    source_data = np.zeros( ( len( data_keys ) , N_source_points ) ).T
+                    for k, dk in enumerate( data_keys ):
+                        source_data[:,k] = group[ dk ][:]
+                        if store_source_data:
+                            if not dk in cls.og_data.keys():
+                                cls.og_data[dk] = []
+                            cls.og_data[dk] += [ group[ dk ][:] ]
+
+                    if store_source_data:    
+                        cls.data_sources += [ source_data[:,k] ]
+                
+                #print(f"\t\tSource coords:\t{source_coords}")
+                #print(f"\t\tTarget coords:\t{target_coords}")
+                #print(f"\t\tSource data:\t{source_data}")
+                #
+                # Interpolate the data to the parcel locations
+                #
+                if interpolator.lower() in ["rbf", "r"]:
+                    interpolator_object = sint.RBFInterpolator( source_coords, source_data, neighbors=int(neighbors) )
+                elif interpolator.lower() in ["linear", "lin", "l"]:
+                    interpolator_object = sint.LinearNDInterpolator( source_coords, source_data )
+                
+                raw_interpOut = interpolator_object( target_coords )
+                #print(f"\t\tRaw interpolated output:\t{raw_interpOut}")
+                for k, dk in enumerate( data_keys ):
+                    cls.data_surrounding[dk][i] = raw_interpOut[:,k]
+
+    def velocities(cls, parcel_prefix="VELOCITY_", flow_prefix="VELOCITY_" ):
+        """
+            This method calculates the velocities that pertain to the particles. The velocites 
+        keep the standard of turbomachinery as follows:
+
+            - U: The velocity of the particle in the absolute reference frame.
+            - C: The velocity of the flow in the absolute reference frame.
+            - W: The velocity of the particle in the relative reference frame. W = C-W.
+
+        """
+
+        cls.data["U"] = []
+        cls.data["C"] = []
+        cls.data["W"] = []
+        for i in range( len( cls.time_steps ) ):
+            timeSte_us = []
+            timeSte_cs = []
+            timeSte_ws = []
+            for j in range( np.array(cls.data[list(cls.data.keys())[0]][i]).shape[0] ):
+                u = np.array( [ cls.data[parcel_prefix+"X"][i][j], cls.data[parcel_prefix+"Y"][i][j], cls.data[parcel_prefix+"Z"][i][j] ] )
+                c = np.array( [ cls.data_surrounding[flow_prefix+"X"][i][j], cls.data_surrounding[flow_prefix+"Y"][i][j], cls.data_surrounding[flow_prefix+"Z"][i][j] ] )
+                w = c - u
+                timeSte_us += [u]
+                timeSte_cs += [c]
+                timeSte_ws += [w]
+            cls.data["U"] += [timeSte_us]
+            cls.data["C"] += [timeSte_cs]
+            cls.data["W"] += [timeSte_ws]
+                
+
+
+    def collect_data(cls, surface_tension=None ):
+        """
+            This method collects various pieces of data that are useful for particle analysis. This includes:
+
+            - Reynolds number
+            - Weber number
+            - Drag coefficient
+
+        """
+
+        #
+        # Get Drag Force
+        #
+        cls.data["accel"] = []
+        cls.data["r"] = []
+        cls.data["F_D"] = []
+        cls.data["Volume"] = [] 
+        N_drops_MAX = 0
+        for i in range( len( cls.time_steps ) ):
+            timeSte_rs = []
+            timeSte_Vs = []
+            for j in range( np.array(cls.data[list(cls.data.keys())[0]][i]).shape[0] ):
+                r = np.array( [ cls.data["PARCEL_X"][i][j], cls.data["PARCEL_Y"][i][j], cls.data["PARCEL_Z"][i][j] ])
+                timeSte_rs += [r]
+                timeSte_Vs += [ 4 * np.pi * cls.data["RADIUS"][i][j]**3 / 3 ]
+            cls.data["r"] += [timeSte_rs]
+            cls.data["Volume"] += [timeSte_Vs]
+            if N_drops_MAX < np.array(cls.data[list(cls.data.keys())[0]][i]).shape[0]:
+                N_drops_MAX = np.array(cls.data[list(cls.data.keys())[0]][i]).shape[0]
+        for j in range( N_drops_MAX ):
+            rs_ = []
+            for i in range( len( cls.time_steps ) ):
+                if j < np.array(cls.data[list(cls.data.keys())[0]][i]).shape[0]:
+                    rs_ += [ cls.data["r"][i][j] ]
+            rs_ = np.array( rs_ )
+            cls.data["accel"] += [np.gradient( np.gradient( rs_, cls.time_steps[:len(rs_)], axis=0 ), cls.time_steps[:len(rs_)], axis=0 )]
+        for i in range( len( cls.time_steps ) ):
+            timeSte_FDs = []
+            for j in range( np.array(cls.data[list(cls.data.keys())[0]][i]).shape[0] ):
+                timeSte_FDs += [ cls.data["MASS"][i][j] * cls.data["accel"][j][i] ]
+            cls.data["F_D"] += [timeSte_FDs]
+
+        #
+        # Get target data
+        #
+        cls.data["Re"] = []
+        cls.data["We"] = []
+        cls.data["We_droplet"] = []
+        cls.data["C_D"] = []
+        for i in range( len( cls.time_steps ) ):
+            timeSte_Res = []
+            timeSte_Wes = []
+            timeSte_Weds = []
+            timeSte_CDs = []
+            for j in range( np.array(cls.data[list(cls.data.keys())[0]][i]).shape[0] ):
+                # Get the Reynolds number
+                Re = cls.data_surrounding["DENSITY"][i][j] * np.linalg.norm( cls.data["W"][i][j] ) * 2*cls.data["RADIUS"][i][j] / cls.data_surrounding["MOL_VISC"][i][j]
+                timeSte_Res += [Re]
+
+                # Get the Weber number relative to the surroundings
+                if not surface_tension:
+                    We = cls.data_surrounding["DENSITY"][i][j] * np.linalg.norm( cls.data["W"][i][j] )**2 * cls.data["RADIUS"][i][j] / cls.data_surrounding["SURF_TENS"][i][j]
+                else:
+                    We = cls.data_surrounding["DENSITY"][i][j] * np.linalg.norm( cls.data["W"][i][j] )**2 * cls.data["RADIUS"][i][j] / surface_tension
+                timeSte_Wes += [We]
+
+                # Get the Weber number for only the droplets
+                if not surface_tension:
+                    We = ( cls.data["MASS"][i][j] / cls.data["Volume"][i][j] ) * np.linalg.norm( cls.data["W"][i][j] )**2 * cls.data["RADIUS"][i][j] / cls.data_surrounding["SURF_TENS"][i][j]
+                else:
+                    We = ( cls.data["MASS"][i][j] / cls.data["Volume"][i][j] ) * np.linalg.norm( cls.data["W"][i][j] )**2 * cls.data["RADIUS"][i][j] / surface_tension
+                timeSte_Weds += [We]
+
+                # Get the drag coefficient
+                if np.linalg.norm( cls.data["W"][i][j] )>0:
+                    C_D = 2 * np.linalg.norm( cls.data["F_D"][i][j] ) / ( cls.data_surrounding["DENSITY"][i][j] * np.linalg.norm( cls.data["W"][i][j] )**2 * np.pi * (cls.data["RADIUS"][i][j])**2 )
+                else:
+                    C_D = 0
+                timeSte_CDs += [C_D]
+
+            cls.data["Re"] += [timeSte_Res]
+            cls.data["We"] += [timeSte_Wes]
+            cls.data["We_droplet"] += [timeSte_Weds]
+            cls.data["C_D"] += [timeSte_CDs]
 
 class fullCV(dataReader):
     """

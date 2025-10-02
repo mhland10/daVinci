@@ -798,7 +798,9 @@ class WaveletData():
             print(f"There are {level} levels")
             for j in range( len( coords ) ):
                 print(f"\tj={j}")
+                print(f"\t\tUsing coordinates:\t{coords[j]}")
                 raw_domains = lineDomainDWT( coords[j], level, supports[0] )
+
                 addition = raw_domains[::-1]
                 print(f"\t\tAddition:\t{addition}")
                 cls.domain += [addition]
