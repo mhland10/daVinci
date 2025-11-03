@@ -149,7 +149,7 @@ class dataReader:
         self.t_lims = t_lims
 
     def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
-                     coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, headers_read=None ):
+                     coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, headers_read=None, N_sourcePts=1000 ):
         """
             This reader reads an OpenFOAM case using Paraview
 
@@ -230,7 +230,7 @@ class dataReader:
             print("Number of cells:", cls.foam.GetDataInformation().GetNumberOfCells())
         
         # Pull the time steps available
-        cls.time_steps = cls.foam.TimestepValues
+        cls.time_steps = np.array( cls.foam.TimestepValues )
 
         # Get cell centers
         cls.cell_centers = pasi.CellCenters(Input=cls.foam)
@@ -255,7 +255,17 @@ class dataReader:
             for c in coordinate_system:
                 cls.data[h+":"+c] = []
 
-        for j, t in enumerate( cls.time_steps ):
+        # Limit the time steps
+        if cls.t_lims:
+            #print(f"Time limits:\t[{np.min(cls.t_lims)}, {np.max(cls.t_lims)}]")
+            t_steps = cls.time_steps[ (cls.time_steps >= np.min(cls.t_lims)) & (cls.time_steps <= np.max(cls.t_lims)) ]
+
+        else:
+            t_steps = np.array( cls.time_steps )
+        #print(f"Original time steps:\t{cls.time_steps}")
+        #print(f"Filtered time steps:\t{t_steps}")
+
+        for j, t in enumerate( t_steps ):
             print(f"Current time step {t} at index {j}...")
 
             # Move the Paraview reader along
@@ -329,20 +339,20 @@ class dataReader:
                     #print("Actually, it's 1D")
                     drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
                     print(f"Dropping dimension {drop_dim}")
-                    object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
+                    object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
                 else:
-                    object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T )( cls.points[:,:N_dims] )
+                    object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( cls.points[:,:N_dims] )
             elif interpolator.lower() in ["l", "lin", "linear", "linearnd", "delaunay", "delaunaytriangulation"]:
-                if 0.0 in np.sum( cell_coords[:,:N_dims] , axis=0 ):
+                if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ):
                     #print("Actually, it's 1D")
                     drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
                     print(f"Dropping dimension {drop_dim}")
-                    x = np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ))[0] )
-                    y = data_matrix.T
-                    x_new = np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ))[0] )
-                    print(f"x is shape {np.shape(x)} and y is shape {np.shape(y)}")
-                    print(f"x_new is shape {np.shape(x_new)} in [{np.min(x_new)}, {np.max(x_new)}]")
-                    object_data = sint.interp1d( x , y , kind="linear", axis=0 )( x_new )
+                    #x = np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ))[0] )
+                    #y = data_matrix.T
+                    #x_new = np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ))[0] )
+                    #print(f"x is shape {np.shape(x)} and y is shape {np.shape(y)}")
+                    #print(f"x_new is shape {np.shape(x_new)} in [{np.min(x_new)}, {np.max(x_new)}]")
+                    object_data = sint.LinearNDInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
                 else:
                     object_data = sint.LinearNDInterpolator( cell_coords[:,:N_dims ], data_matrix.T )( cls.points[:,:N_dims] )
             else:
@@ -1194,6 +1204,7 @@ class dataReader:
 
         Args:
             filename (string):      The file name.
+
             working_dir (string):   The directory where the file is.
 
         """

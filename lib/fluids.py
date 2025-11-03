@@ -267,6 +267,7 @@ class compressibleGas:
         # Perform the wavelet transform on the data with the specified keys
         if 't' in cls.dims:
             swt.N_dims -= 1
+            swt.max_levels = pywt.dwtn_max_level( ( input_data[list(input_data.keys())[0]].shape[-1] ,), wt_family )
         swt.waveletTransform([wt_family], keys=[key] )
 
         # Find the domain that represents the DWT
@@ -294,13 +295,13 @@ class compressibleGas:
         cls.shock_loc = []
         if 'x' in cls.dims:
             print(f"x data is in {cls.dims.index('x')}")
-            cls.x_pts = swt.domain[level][cls.dims.index('x')]
+            cls.x_pts = swt.domain[cls.dims.index('x')][level]
             cls.shock_loc += [cls.x_pts[cls.shock_loc_indx]]
         if 'y' in cls.dims:
             cls.y_pts = swt.domain[cls.dims.index('y')][level]
             cls.shock_loc += [cls.y_pts[cls.shock_loc_indx]]
         if 'z' in cls.dims:
-            cls.z_pts = swt.domain[level][cls.dims.index('z')]
+            cls.z_pts = swt.domain[cls.dims.index('z')][level]
             cls.shock_loc += [cls.z_pts[cls.shock_loc_indx]]
         if 't' in cls.dims:
             cls.t_pts = input_time_domain
@@ -375,12 +376,561 @@ class compressibleGas:
             cls.frozen_shock_profile[key] = np.nanmean( data, axis=0 )
 
 
-#============================
+#==================================================================================================
+#
+#   Fluid Structure Objects
+#
+#==================================================================================================
 
+class turbulentShearMixingLayer:
+    """
+        This object contains all the data and methods required to generate and assess the behavior
+    within it. References include:
+
+    [43] Pantano, C. and Sarkar, S. (2002). *A study of compressibility effects in the high-speed 
+            turbulent shear layer using direct simulation.* Journal of Fluid Mechanics. Vol 451, 
+            pgs 329-371. DOI: 10.1017/S0022112001006978
+
+    """
+
+    def __init__(self, convective_MachNo=0.0, density_ratio=1.0):
+        """
+            Initialize the turbulent shear mixing layer. 
+
+        Args:
+            convective_MachNo (float, optional):    The convective Mach Number of the mixing layer. 
+                                                    Defined as:
+                                                    
+                                                    M_c = \frac{\Delta u}{c_1 + c_2} [Eq 2.7, 43]
+
+                                                    Defaults to 0.0, or an incompressible shear 
+                                                    layer.
+
+            density_ratio (float, optional):    The density ratio of the upper vs lower stream. 
+                                                Defaults to 1.0. 
+
+                                                s = \frac{\rho_2}{\rho_1} [Eq 2.9, 43]
+
+        Attributes:
+
+        M_c <= convectiveMachNo
+
+        dens_ratio <= density_ratio
+
+        Atwood_number: The Atwood number 
+
+        """
+
+        # Store mixing layer properties
+        self.M_c = convective_MachNo
+        self.dens_ratio = density_ratio
+
+        # Calculate other values
+        self.Atwood_number = ( self.dens_ratio - 1 ) / ( self.dens_ratio + 1 )
+
+    def initial_conditions(cls, stream_velocity_difference, mixingLayer_width, stream_temperatures, stream_Rs ):
+        """
+            Initialize the conditions for the mixing layer
+
+        Args:
+            stream_velocity_difference [m/s] (float):   The difference in velocity between the 
+                                                        freestreams. Defined as:
+
+                                                        \Delta u=u_2 - u_1
+            
+            mixingLayer_width [m] (float):  The width of the mixing layer at the beginning.
+
+            stream_temperature [K] (float, NumPy 1D array): The freestream temperatures of the
+                                                            different streams. 
+
+            stream_Rs [J/kgK] (float, NumPy 1D array):  The freestream gas constants of the 
+                                                        different streams.
+
+        """
+
+        # Initial dimensions
+        cls.delta_theta0 = mixingLayer_width
+
+        # Stream properties
+        cls.DeltaU = stream_velocity_difference
+
+        # Store the fluid conditions
+        if not np.isscalar(stream_temperatures):
+            cls.stream_T = np.array( [ stream_temperatures[0], stream_temperatures[-1] ] )
+        else:
+            cls.stream_T = np.array( [stream_temperatures, stream_temperatures] )
+
+        if not np.isscalar( stream_Rs ):
+            cls.stream_R = np.array( [stream_Rs[0], stream_Rs[-1]] )
+        else:
+            cls.stream_R = np.array( [stream_Rs, stream_Rs] )
         
 
+    def domain_dimensions(cls, X_domain, N_x, Y_domain, N_y, Z_domain=None, N_z=0 ):
+        """
+            The dimensions of the domain that is getting set up.
+
+        Args:
+            X_domain (float, NumPy 1D Array):   The bounds for the x-domain.
+
+            N_x (int):  The number of points in the domain.
+
+            Y_domain (float, NumPy 1D Array):   The bounds for the y-domain.
+
+            N_y (int):  The number of points in the domain.
+
+            Z_domain (float, NumPy 1D Array):   The bounds for the z-domain. Defaults to None.
+
+        Attributes:
+
+        domain (float, list):   The domain. In the format of:
+
+                                [dimension index][Point index]
+
+        """
+        # Initialize the domain
+        cls.domain = []
+
+        #
+        #   Initialize the domains
+        #
+        X_domain = np.linspace( np.min( X_domain ), np.max( X_domain ), num=N_x )
+        cls.domain += [X_domain]
+
+        Y_domain = np.linspace( np.min( Y_domain ), np.max( Y_domain ), num=N_y )
+        cls.domain += [Y_domain]
+
+        if Z_domain:
+            Z_domain = np.linspace( np.min( Z_domain ), np.max( Z_domain ), num=N_z )
+            cls.domain += [Z_domain]
+
+
+    def initialize_inletProfile(cls, average_density, streamwise_dimension=0, temperature_blending_factor="Reynolds", Lewis_no=1.0, U_offset = np.array( [ 0.0, 0.0, 0.0 ] ) ):
+        """
+            Initialize the inlet profile
+
+        Args:
+            average_density (float):    The average density of the streams.
+
+            streamwise_dimension (int, optional):   The velocity component that defines the 
+                                                    streamwise component. The following dimension
+                                                    index will be the spanwise coordinate.
+
+            temperature_blending_factor (optional): The hyperbolic tangent value to blend the 
+                                                    profiles by. The valid options are:
+
+                                                    "*Reynolds": Use the Reynolds analogy for 
+                                                                blending where momentum and thermal
+                                                                blending are proportional.
+
+                                                    Not case sensitive.
+
+        Attributes:
+
+        u (float, NumPy 2D array): The velocity profile. Takes the format of:
+
+                                    [(x, y, z) dimensions, N_points]
+
+                                Where x is the streamwise direction by default. If there is no
+                                z-dimension in cls.domain, then the z dimension will not be 
+                                present.
+
+        """
+        N_points = cls.domain[streamwise_dimension+1].shape[0]
+
+        # Store the streamwise dimension
+        cls.streamwise = streamwise_dimension
+
+        # Initialize the velocity profile
+        cls.u = np.zeros( ( len(cls.domain), N_points ) )
+        cls.u[streamwise_dimension,:] += -( cls.DeltaU / 2 ) * np.tanh( - cls.domain[ streamwise_dimension + 1 ] / ( 2 * cls.delta_theta0 ) )
+        for i in range( len( cls.domain ) ):
+            cls.u[i,:] += U_offset[i]
+
+        # Store the average density
+        cls.rho_avg = average_density
+
+        # Initialize the density profile
+        cls.rho = np.zeros( N_points )
+        cls.rho = average_density * ( 1 - cls.Atwood_number * np.tanh( - cls.domain[ streamwise_dimension + 1 ] / ( 2 * cls.delta_theta0 ) ) )
+
+        # Initialize the temperature
+        cls.T = np.zeros( N_points )
+        if not isinstance( temperature_blending_factor, str ):
+            cls.T =  ( ( cls.stream_T[1] - cls.stream_T[0] ) / 2 ) * np.tanh( - cls.domain[ streamwise_dimension + 1 ] / temperature_blending_factor ) + np.mean( cls.stream_T )
+        elif temperature_blending_factor.lower() in ["reynolds", "reynolds analogy", "re"]:
+            cls.T =  ( ( cls.stream_T[1] - cls.stream_T[0] ) / 2 ) * np.tanh( - cls.domain[ streamwise_dimension + 1 ] / ( 2 * cls.delta_theta0 ) ) + np.mean( cls.stream_T )
+
+        # Initialize the gas constants
+        cls.R = np.zeros( N_points ) + np.mean( cls.stream_R )
+        #cls.R = ( cls.stream_R[1] - cls.stream_R[0] ) * cls.T * Lewis_no / ( cls.stream_T[1] - cls.stream_T[0] )
+        cls.R += np.nan_to_num( ( cls.stream_R[1] - cls.stream_R[0] ) * cls.T * Lewis_no / ( cls.stream_T[1] - cls.stream_T[0] ), nan=0 )
+
+        # Initialize the pressure constants
+        cls.p = np.zeros( N_points )
+        cls.p = cls.rho * cls.R * cls.T
+
+    def turbulence_inletProfile(cls, average_viscosity, R_xx_NormalizedPeak=[ 0.175, 0.134, 0.145 ], R_xx_Baseline=[ 0.025, 0.025, 0.010 ], epsilon_NormalizedPeak=1.2e-3, distribution_method="pdf", conversion_turbulenceModels=None, ke_coefficients={ "C_mu": 0.09 }, ko_coefficients={ "beta_star":0.09 }, SA_coefficients= { "C_v1": 7.1 }, minimum_dissipation=200.0e6, minimum_specDissipation=10e3, N_smoothing=1 ):
+        """
+            This method generates profiles of the turbulence according to the methods outlined in 
+        [43]. 
+
+        Args:
+            average_viscosity [Pa*s] (float):   The density averaged viscosity of the two streams.
+                                                Only used for the Spalart-Allmaras turbulence model
+                                                conversion.
+
+            R_xx_NormalizedPeak (list, optional): The peaks of the square root of two-point 
+                                                    correlations normalized by \Delta u. Defaults 
+                                                    to [ 0.175, 0.134, 0.145 ]. Produces turbulent
+                                                    kinetic energy profile. Values from [43].
+
+            R_xx_Baseline (list, optional): The baseline for the square root of two-point 
+                                            correlations normalized by \Delta u. Default to 
+                                            [0.025, 0.025, 0.010]. Produces the base of the TKE
+                                            profile. Values from [43].
+
+            distribution_method (str, optional):  The method to produce the distribution of 
+                                                    turbulence statistics. The valid options are:
+
+                                                "*pdf": Uses a probability density function to 
+                                                        produce a distribution of the TKE, 
+                                                        dissipation, etc. where the sqrt(variance),
+                                                        or std dev, is 4\delta_\theta or 
+                                                        \delta_\omega. There will be some offset
+                                                        beyond this point.
+                                                
+            conversion_turbulenceModels (str, list):    A list of turbulence models to convert to.
+                                                        If not necessary, leave as None. Valid
+                                                        options are:
+
+                                                        "k-omega": k-omega model
+
+                                                        "SA": Spalart-Allmaras Model
+
+        """
         
 
+        # Initialize the base profiles
+        cls.TKE = np.zeros_like( cls.rho )
+        cls.dissipation = np.zeros_like( cls.TKE )
+
+        #=============================================================
+        #
+        #   Set the baseline TKE & dissipation profile
+        #
+        #=============================================================
+        if distribution_method.lower() in ["pdf", "probability", "bell", "p", "probability density function"]:
+        
+            # Pull the SciPy stats
+            import scipy.stats as spst
+
+            # Set the baseline values
+            cls.TKE += ( np.linalg.norm( np.array( R_xx_Baseline ) ) * cls.DeltaU ) ** 2
+
+            # Set the PDF base profile
+            PDF_raw = spst.norm.pdf( cls.domain[cls.streamwise+1], loc=0, scale=cls.delta_theta0 )
+            cls.PDF = PDF_raw / np.max( PDF_raw )
+
+            # Rescale R_xx
+            R_xx_rescale = np.array( R_xx_NormalizedPeak ) - np.array( R_xx_Baseline )
+            
+            # Add peak to TKE
+            cls.TKE += cls.PDF * ( np.linalg.norm( R_xx_rescale ) * cls.DeltaU ) ** 2
+
+            # Add distribution to epsilon
+            disp_pdf = np.convolve( cls.PDF, np.ones( N_smoothing ) / N_smoothing, mode="same" )
+            cls.dissipation += np.sqrt( disp_pdf / np.max(disp_pdf) ) * ( epsilon_NormalizedPeak * ( cls.DeltaU ** 3 ) / cls.delta_theta0 )
+
+            cls.dissipation = np.maximum( cls.dissipation , minimum_dissipation * np.ones_like( len(cls.dissipation ) ) )
+            #cls.dissipation = np.maximum( cls.dissipation , (ke_coefficients["C_mu"]**(3/4))*(cls.TKE**(3/2)) / cls.delta_theta0 )
+
+        #=============================================================
+        #
+        #   Convert to different turbulence model
+        #
+        #=============================================================
+        if not conversion_turbulenceModels is None:
+            mut_max = cls.rho_avg * ke_coefficients["C_mu"] * ( np.max( cls.TKE ) ** 2 ) / np.max( cls.dissipation )
+            cls.mut = cls.rho * ke_coefficients["C_mu"] * ( cls.TKE ** 2 ) / ( cls.dissipation )
+
+            for model in conversion_turbulenceModels:
+
+                if model.lower() in ["ko", "k-o", "komega", "k-omega", "menter", "wilcox"]:
+                    cls.spec_dissipation = np.zeros_like( cls.dissipation )
+
+                    spec_dissipation_max = np.max( cls.TKE ) / mut_max
+
+                    #cls.spec_dissipation = cls.rho * cls.PDF * spec_dissipation_max + minimum_specDissipation
+                    cls.spec_dissipation = ( cls.dissipation ) / ( cls.TKE * ko_coefficients["beta_star"] )
+                    #cls.spec_dissipation = ( cls.mut / cls.rho ) / ( ko_coefficients["beta_star"] * cls.TKE )
+
+                if model.lower() in ["spalart allmaras", "spalart-allmaras", "sa"]:
+
+                    base_dynVisc = average_viscosity / cls.rho_avg
+
+                    nu_tilde_0 = base_dynVisc * np.ones_like( cls.mut )
+
+                    def nut_result( nu_tilde ):
+                        """
+                            This function produces the turbulent viscosity from the Spalart-
+                        Allmaras model.
+
+                        Remember that
+
+                            \chi = \frac{\tilde{\nu}}{\nu}
+
+                            and
+
+                            f_{v1} = \frac{ \chi^3 }{ \chi^3 + C_{v1}^3 }
+
+                        Args:
+                            nu_tilde (float, NumPy 1D array): The array of nu-tilde values.
+
+                        Returns
+                            mu_t (float, NumPy 1D array):   The array of mu_t values.
+
+                        """
+
+                        chi = nu_tilde / base_dynVisc
+
+                        f_v1 = ( chi**3 ) / ( ( chi**3 ) + SA_coefficients["C_v1"]**3 )
+
+                        return cls.rho * nu_tilde * f_v1
+                    
+                    #print(f"Initial mu_t guesses:\t{nut_result(nu_tilde_0)}")
+                    
+                    def residuals( nu_tilde ):
+                        return nut_result( nu_tilde ) - cls.mut
+                    
+                    #print(f"Initial residuals:\t{residuals(nu_tilde_0)}")
+                    
+                    import scipy.optimize as spopt
+
+                    solved = spopt.least_squares( residuals, nu_tilde_0, gtol=None )
+                    #cls.LSQ_solution = solved
+
+                    cls.nu_tilde = solved.x
+
+                        
+
+class boundaryLayer:
+    """
+        This object holds the data and methods that describes a boundary layer.
+
+    """
+
+    def __init__(self, U_infty, nu, coordinates):
+        """
+            Initialize the boundary layer with needed data.
+
+        Args:
+            U_infty (float):    The freestream velocity.
+
+            nu (float):     [m^2/s] The freestream viscosity.
+
+            coordinates (float, NumPy NDArray): The wall-normal coordinate system for the boundary
+                                                layer.
+
+        """
+
+        # Store the data
+        self.U_infty = U_infty
+        self.nu_infty = nu
+
+        # Store the coordinates
+        self.coordinates = coordinates
+
+
+    def data_import(cls, data_dictionary, velocity_keys=["U:x", "U:y", "U:z"], pressure_key="p", temperature_key="T", density_key="rho", nu_T_key="nut" ):
+        """
+            Import the needed data into the boundaryLayer object.
+
+        Args:
+            data_dictionary (dictionary):   The input data dictionary.
+
+            *Data Keys*: The keys of data dictionary that correspond to the following data. If not
+                            to be stored, leave each as blank. The following are taken, and the 
+                            default is:
+
+            velocity_keys - ["U:x", "U:y", "U:z"] - keys for each component of velocity
+
+            pressure_key - "p" - key for pressure
+
+            temperature_key - "T" - key for temperature
+
+            density_key - "rho" - key for density
+
+            nu_T_key - "nut" - key for turbulent viscosity
+
+        """
+        cls.data = {}
+
+        # Store all matching velocity keys individually
+        cls.vel_keys = velocity_keys
+        for k in velocity_keys:
+            if k in data_dictionary:
+                cls.data[k] = data_dictionary[k]
+
+
+        # Import pressure
+        if pressure_key:
+            cls.pressure_key = pressure_key
+            cls.data[pressure_key] = data_dictionary[pressure_key]
+
+        # Import temperature
+        if temperature_key:
+            cls.temperature_key = temperature_key
+            cls.data[temperature_key] = data_dictionary[temperature_key]
+
+        # Import density
+        if density_key:
+            cls.density_key = density_key
+            cls.data[density_key] = data_dictionary[density_key]
+
+        # Import turbulent viscosity key
+        if nu_T_key:
+            cls.nu_T_key = nu_T_key
+            cls.data[nu_T_key] = data_dictionary[nu_T_key]
+
+
+    def boundaryLayerThickness_calculation(cls, threshold=0.99):
+        """
+            Calculate the boundary layer thicknesses.
+
+        Args:
+            threshold (float, optional):    The threshold that define boundary layer thickness. 
+                                            Defaults to 0.99.
+
+        """
+        N_timeSteps = cls.data[cls.vel_keys[0]].shape[0]
+        cls.N_timeSteps = N_timeSteps
+
+        # Store the threshold
+        cls.BL_threshold = threshold
+
+        # Boundary layer thickness
+        cls.delta = np.zeros( N_timeSteps )
+        for i in range( N_timeSteps ):
+            vel_ratios = (cls.data[cls.vel_keys[0]][i]/cls.U_infty -threshold)
+            #print(f"vel ratios shape:\t{vel_ratios.shape}")
+            cls.delta[i] = np.interp( 0, vel_ratios, cls.coordinates[1] )
+
+        # Displacement thickness
+        if hasattr( cls, "density_key" ):
+            rho_us = cls.data[cls.density_key] * cls.data[cls.vel_keys[0]]
+            rho_ue = cls.data[cls.density_key][-1] * cls.U_infty
+        else:
+            rho_us = cls.data[cls.vel_keys[0]]
+            rho_ue = cls.U_infty
+        cls.delta_star = np.trapz( (1-rho_us/rho_ue), cls.coordinates[1] )
+
+        # Momentum thickness
+        cls.theta = np.trapz( (rho_us/rho_ue)*(1-rho_us/rho_ue), cls.coordinates[1] )
+
+        # Shape Factor
+        cls.H = cls.delta_star / cls.theta
+
+    def boundaryLayerProfile(cls, nu_wall=None, kappa=0.41, C_plus=5.0, isothermal=True, sutherland_coeffs={ "T_0":273.15, "S":110.4, "C_1":1.458e-6, "mu_0":17.16e-6, "R":287 } ):
+        """
+            This method calculate the boundary layer profile for the 
+
+        Args:
+            nu_wall (?, optional):  The method or value to calculate the viscosity at the wall. The
+                                    valid options are:
+
+                                    *None:  Use the freestream viscosity
+
+                                    "sutherland" or "s":    Uses Sutherland's law
+
+                                    <float> or <int>:   A known value for viscosity
+
+            kappa (float, optional):    von Karman constant. Defaults to 0.41.
+
+            C_plus (float, optional):   C^+ value for law of the wall. Defaults to 5.0, empirical
+                                        value for smooth walls.
+
+            isothermal (boolean, optional): Whether the boundary layer can be assumed isothermal. 
+                                            Drives the interpolation method will be used for the
+                                            viscosity profile in the boundary layer.
+
+            sutherland_coeffs (float, dictionary, optional):    The Sutherland's Law coefficients.
+                                                                Default values are for air. See:
+
+                        https://www.cfd-online.com/Wiki/Sutherland%27s_law
+
+        """
+
+        #=============================================================
+        #
+        #   Calculate the wall viscosity
+        #
+        #=============================================================
+        if nu_wall is None:
+            nu_wall = cls.nu_infty
+
+        elif isinstance( nu_wall, (int, float ) ):
+            nu_wall = nu_wall
+
+        elif nu_wall.lower() in ["sutherland", "s"]:
+            method = nu_wall.lower()
+            if isothermal:
+                print( "WARNING: Sutherland method selected, but isothermal boundary layer selected. Isothermal overriden." )
+            T_wall = cls.data[cls.temperature_key][:,0]
+            mu_wall = sutherland_coeffs["mu_0"] * ( ( T_wall / sutherland_coeffs["T_0"] ) ** 1.5 ) * ( ( sutherland_coeffs["T_0"] + sutherland_coeffs["S"] ) / ( T_wall + sutherland_coeffs["S"] ) )
+            if hasattr( cls, "density_key" ):
+                nu_wall = mu_wall / cls.data[cls.density_key][:,0]
+            else:
+                rho_wall = cls.data[cls.pressure_key][:,0] / ( sutherland_coeffs["R"] * T_wall )
+                nu_wall = mu_wall / rho_wall
+
+        else:
+            raise ValueError( "Wall viscosity method is invalid" )
+        
+        #=============================================================
+        #
+        #   Calculate BL parameters
+        #
+        #=============================================================
+
+        # Calculate friction velocity
+        cls.u_tau = np.zeros( cls.N_timeSteps )
+        for i in range( cls.N_timeSteps ):
+            tau_w = nu_wall * np.gradient( cls.data[cls.vel_keys[0]][i], cls.coordinates[1] )[0]
+            cls.u_tau[i] = np.sqrt( tau_w )
+
+        #=============================================================
+        #
+        #   Calculate profile
+        #
+        #=============================================================
+
+        # Calculate law of the wall velocity
+        cls.u_plus = cls.data[cls.vel_keys[0]] / cls.u_tau
+
+        # Calculate the viscosity profiles
+        if nu_wall is None or isinstance( nu_wall, (int, float ) ):
+            if isothermal:
+                DT = cls.coordinates[1][0] - cls.coordinates[1][-1]
+                Dnu = nu_wall - cls.nu_infty
+                nus = ( cls.coordinates[1] - cls.coordinates[1][-1] ) * ( Dnu / DT ) + cls.nu_infty
+            else:
+                DT = cls.data[cls.temperature_key][:,0] - cls.data[cls.temperature_key][:,-1]
+                Dnu = nu_wall - cls.nu_infty
+                nus = np.sqrt( ( cls.data[cls.temperature_key] - cls.data[cls.temperature_key][-1] )  * ( ( Dnu / DT ) ** 2 ) ) + cls.nu_infty
+        elif method in ["sutherland", "s"]:
+                Ts = cls.data[cls.temperature_key]
+                mus = sutherland_coeffs["mu_0"] * ( ( Ts / sutherland_coeffs["T_0"] ) ** 1.5 ) * ( ( sutherland_coeffs["T_0"] + sutherland_coeffs["S"] ) / ( Ts + sutherland_coeffs["S"] ) )
+                if hasattr( cls, "density_key" ):
+                    nus = mus / cls.data[cls.density_key]
+                else:
+                    rhos = cls.data[cls.pressure_key] / ( sutherland_coeffs["R"] * Ts )
+                    nus = mus / rhos
+        cls.nus = nus
+
+
+        # Calculate the law of the wall coordinates
+        cls.y_plus = cls.coordinates[1] * cls.u_tau / nus
 
 
 
