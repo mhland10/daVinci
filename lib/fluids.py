@@ -428,6 +428,138 @@ class turbulentShearMixingLayer:
         # Calculate other values
         self.Atwood_number = ( self.dens_ratio - 1 ) / ( self.dens_ratio + 1 )
 
+    def initialize_shearLayerProfile(cls, stream_velocity_difference, coordinates, coordinate_system=['x','y'], spanwise_coordinate=1 ):
+        """
+            This method allows the user to initialize the turbulent shear layer.
+
+        Args:
+            stream_velocity_difference [m/s] (float):   The difference in velocity between the 
+                                                        freestreams. Defined as:
+
+                                                        \Delta u=u_2 - u_1
+
+            coordinates (float, NumPy 2D array):    The array that corresponds to the coordinates
+                                                    of the shear layer. The first axis will pertain
+                                                    to the axis of coordinates, then the second 
+                                                    axis will pertain to the point sample.
+
+            coordinate_sytem (string, list, optional):  The coordinate system that pertains to the
+                                                        turbulent shear layer.
+
+            spanwise_coordinate (int, optional):    The axis that pertains to the spanwise 
+                                                    direction. Defaults to 1, which is entry #2 in
+                                                    coordinate_system.
+
+        """
+        # Stream properties
+        cls.DeltaU = stream_velocity_difference
+
+        # Coordinates
+        cls.coords = coordinates
+        cls.coord_sys = coordinate_system
+        cls.spanwise_coord = spanwise_coordinate
+        if not len(cls.coord_sys)==cls.coords.shape[0]:
+            if len(cls.coords.shape)==1:
+                raise ValueError("The first axis of the coordinates is the number of points, make sure that coordinate entry is 2D NumPy array.")
+            raise ValueError("Coordinate system contains a different number of axes than coordinates provided.")
+
+
+    def shearLayerProfile_measure(cls, data, streamwise_velocity_key="U:x", density_key="rho", spanwise_velocity_key="U:y", 
+                                  tke_key="k", turb_modeling=True, turb_viscosity_key="nut", turb_dissipation_key="omega", 
+                                  temperature_key="T", C_delta=0.0384, ke_coeff = { "C_mu":0.09 }, 
+                                  ko_coeff = { "beta*": 0.009, "sigma_k":0.85 }, viscosity_func="sutherland", 
+                                  sutherland_coeffs={ "T_0":273.15, "S":110.4, "mu_0":17.16e-6 }, Temp=300 ):
+        """
+            This method allows the user to measure important data of the turbulent shear layer
+
+        Args:
+            data (dictionary):  The dictionary to pull the data from. Note that the first axis of
+                                all the entries must pertain to time, then the second axis to the
+                                sample points.
+
+            streamwise_velocty_key (string, optional):  The key in the data that describes the
+                                                        streamwise component of velocity. The 
+                                                        default is "U:x".
+
+            density_key (string, optional): The key in the data that describes the density. The
+                                            the default is "rho".
+
+            C_delta (float, optional):  The growth coefficient for the momentum thickness acquired
+                                        by Dai et al. (2022). This produces an empirical value for
+                                        momentum thickness growth rate for incompressible flow.
+
+        """
+        # Store data
+        cls.data = data
+
+        #=============================================================
+        #
+        #   Calculate Favre averaged data
+        #
+        #=============================================================
+
+        cls.favre_data = {}
+        cls.favre_data["u"], cls.favre_data["rho"] = favre_average( cls.data[density_key], cls.data[streamwise_velocity_key], return_rho_avg=True )
+        cls.favre_data["v"] = favre_average( cls.data[density_key], cls.data[spanwise_velocity_key] )
+        if not temperature_key==None:
+            cls.favre_data["T"] = favre_average( cls.data[density_key], cls.data[temperature_key] )
+        else:
+            cls.favre_data["T"] = Temp
+        if turb_modeling:
+            cls.favre_data["k"] = favre_average( cls.data[density_key], cls.data[tke_key] )
+            cls.favre_data["omega"] = favre_average( cls.data[density_key], cls.data[tke_key] )
+            cls.favre_data["nut"] = favre_average( cls.data[density_key], cls.data[turb_viscosity_key] )
+
+        #=============================================================
+        #
+        #   Calculate self-similar profile
+        #
+        #=============================================================
+
+        # Calculate convective velocity
+        cls.U_c = np.trapz( cls.favre_data["rho"] * cls.favre_data["u"], cls.coords[cls.spanwise_coord] ) / np.trapz( cls.favre_data["rho"] , cls.coords[cls.spanwise_coord] ) 
+
+        # Calculate the momentum thickness
+        u_tildes = cls.favre_data["u"]
+        rho_avg = cls.favre_data["rho"]
+        DU = np.abs( u_tildes[-1] - u_tildes[0] )
+        #integral_val = np.trapz( rho_avg * ( cls.U_c - u_tildes ) * ( cls.U_c + u_tildes ), cls.coords[cls.spanwise_coord] )
+        integral_val = np.trapz( rho_avg * ( cls.favre_data["u"][-1] - cls.favre_data["u"] ) * ( cls.favre_data["u"] - cls.favre_data["u"][0] ), cls.coords[cls.spanwise_coord] )
+        cls.delta_theta = integral_val / ( np.mean( rho_avg ) * ( DU ** 2 ) )
+
+        # Calculate the vorticity thickness
+        cls.delta_omega = DU / np.max( np.gradient( u_tildes, cls.coords[cls.spanwise_coord] ) )
+
+        # Calculate empirical incompressilbe growth rate
+        cls.delta_theta_dot_incompressible = C_delta * ( 1 - u_tildes[0]/u_tildes[-1] ) * ( 1 + np.sqrt( rho_avg[0] / rho_avg[-1] ) ) / ( 2 * ( 1 + (u_tildes[0]/u_tildes[-1]) * np.sqrt( rho_avg[0] / rho_avg[-1] ) ) )
+        
+        #=============================================================
+        #
+        #   Calculate the TKE budget data
+        #
+        #=============================================================
+
+        cls.tke_budget = {}
+
+        # Calculate the production
+        du_dy = np.gradient( cls.favre_data["u"], cls.coords[cls.spanwise_coord] )
+        dv_dy = np.gradient( cls.favre_data["v"], cls.coords[cls.spanwise_coord] )
+        if turb_modeling:
+            cls.tke_budget["Production"] = 2 * cls.favre_data["nut"] * cls.favre_data["rho"] * ( 2 * ( du_dy ** 2 ) + ( dv_dy ** 2 ) )
+            cls.tke_budget["Production"] -=  (2/3) * cls.favre_data["k"] * dv_dy
+
+        # Calculate the dissipation
+        if turb_modeling:
+            #cls.tke_budget["Dissipation"] = -ko_coeff["beta*"] * cls.favre_data["rho"] * cls.favre_data["k"] * cls.favre_data["omega"]
+            cls.tke_budget["Dissipation"] = -cls.favre_data["rho"] * ke_coeff["C_mu"] * ( cls.favre_data["k"]**2 ) / cls.favre_data["nut"]
+
+        # Calculate the transport
+        if viscosity_func.lower() in ["sutherland's law", "sutherlands law", "sutherland", "s"]:
+            mu = sutherland_viscosity( cls.favre_data["T"], coefficients=sutherland_coeffs )
+        if turb_modeling:
+            cls.tke_budget["Transport"] = np.gradient( ( mu + ko_coeff["sigma_k"] * cls.favre_data["nut"] * cls.favre_data["rho"] ) * np.gradient( cls.favre_data["k"], cls.coords[cls.spanwise_coord] ), cls.coords[cls.spanwise_coord] )
+
+
     def initial_conditions(cls, stream_velocity_difference, mixingLayer_width, stream_temperatures, stream_Rs ):
         """
             Initialize the conditions for the mixing layer
@@ -447,7 +579,6 @@ class turbulentShearMixingLayer:
                                                         different streams.
 
         """
-
         # Initial dimensions
         cls.delta_theta0 = mixingLayer_width
 

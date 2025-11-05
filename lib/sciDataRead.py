@@ -149,7 +149,7 @@ class dataReader:
         self.t_lims = t_lims
 
     def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
-                     coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, headers_read=None, N_sourcePts=1000 ):
+                     coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, headers_read=None, N_sourcePts=1000, allow_dim_drop=True ):
         """
             This reader reads an OpenFOAM case using Paraview
 
@@ -335,7 +335,7 @@ class dataReader:
 
             # Interpolate onto the points
             if interpolator.lower() in ["rbf", "rbfinterpolator","radial basis function", "radialbasisfunction"]:
-                if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ):
+                if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ) and allow_dim_drop:
                     #print("Actually, it's 1D")
                     drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
                     print(f"Dropping dimension {drop_dim}")
@@ -352,7 +352,7 @@ class dataReader:
                     #x_new = np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ))[0] )
                     #print(f"x is shape {np.shape(x)} and y is shape {np.shape(y)}")
                     #print(f"x_new is shape {np.shape(x_new)} in [{np.min(x_new)}, {np.max(x_new)}]")
-                    object_data = sint.LinearNDInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
+                    object_data = sint.LinearNDInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
                 else:
                     object_data = sint.LinearNDInterpolator( cell_coords[:,:N_dims ], data_matrix.T )( cls.points[:,:N_dims] )
             else:

@@ -352,6 +352,62 @@ class numericalGradient:
         return gradient            
 
 
+#==================================================================================================
+#
+#   Fluid Physics Functions
+#
+#==================================================================================================
+
+def favre_average( rhos, phis, time_axis=0, return_rho_avg=False ):
+    """
+        This function calculate the Favre averaged value for a scalar phi based on the density 
+    given a density rho.
+
+    Args:
+        rhos (float, NumPy ND array):   The density values.
+
+        phis (float, NumPy ND array):   The scalar values.
+
+        time_axis (int, optional):  The axis of the data arrays that pertains to time to average
+                                    over.
+
+        return_rho_avg (bool, optional):    Whether or not to also return the average density.
+
+    Returns:
+        tilde_phis (float, NumPy (N-1)D array): The Favre-averaged values for phi.
+
+        rho_avg (float, NumPy (N-1)D array, optional):    The average density.
+
+    """
+
+    tilde_phis = np.mean( rhos * phis, axis=time_axis ) / np.mean( rhos, axis=time_axis )
+
+    if not return_rho_avg:
+        return tilde_phis
+    else:
+        return tilde_phis, np.mean( rhos, axis=time_axis )
+    
+
+def sutherland_viscosity( T, coefficients={ "T_0":273.15, "S":110.4, "mu_0":17.16e-6 } ):
+    """
+        Provides a calculation of Sutherland viscosity based on temperature.
+
+    Args:
+        T (float, NumPy NDArray):   The value(s) for temperature.
+
+        coefficients (dict, optional):  The Sutherland coefficients. Defaults to those for air:
+         
+                                        { "T_0":273.15, "S":110.4, "mu_0":17.16e-6 }.
+
+    Returns:
+        mu (float, NumPy NDArray):  The value(s) for viscosity.
+
+    """
+
+    mu = coefficients["mu_0"] * ( ( T / coefficients["T_0"] ) ** 1.5 ) * ( coefficients["T_0"] + coefficients["S"] ) / ( T + coefficients["S"] )
+
+    return mu
+
 
     
 
