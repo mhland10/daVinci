@@ -118,14 +118,20 @@ def fourierTransformND( data , dt = 1.0 , N = None , fft_method = 'normal' ,
         else:
             amplitude_data_flat = xp.fft.fft( data_flat , n = N ).astype( complex_precision )
         fft_data_length = np.shape( amplitude_data_flat )[-1]
-        frequency_data = xp.fft.fftfreq( data_shape[0] , d = dt ).astype( precision )
+        if not N:
+            frequency_data = xp.fft.fftfreq( data_shape[0] , d = dt ).astype( precision )
+        else:
+            frequency_data = xp.fft.fftfreq( N , d = dt ).astype( precision )
     elif fft_method.lower()=='real':
         if not N:
             amplitude_data_flat = xp.fft.rfft( data_flat ).astype( complex_precision )
         else:
             amplitude_data_flat = xp.fft.rfft( data_flat , n = N ).astype( complex_precision )
         fft_data_length = np.shape( amplitude_data_flat )[-1]
-        frequency_data = xp.fft.rfftfreq( data_shape[0] , d = dt ).astype( precision )
+        if not N:
+            frequency_data = xp.fft.rfftfreq( data_shape[0] , d = dt ).astype( precision )
+        else:
+            frequency_data = xp.fft.rfftfreq( N , d = dt ).astype( precision )
     
     amplitude_data = np.reshape( np.moveaxis( amplitude_data_flat , -1 , 0 ) , ( fft_data_length ,) + data_shape[1:] )
         
@@ -497,12 +503,17 @@ class SpectralData():
             corr_shape = ( ifft_len ,)
         correlation_shape = ( len( variables ) ,) + ( len( variables ) ,) + corr_shape
         cls.correlation = np.zeros( correlation_shape )
+        cls.correlation_dict = {}
         
         for i , v in enumerate( variables ):
+            correlation_smallDictionary = {}
             for j , w in enumerate( variables ):
                 fft_axis_length = np.shape( cls.fourier_data[v] )[0]
-                corr_raw = np.roll( np.fft.irfft( cls.fourier_data[v] * np.conj( cls.fourier_data[w] ) , axis=0 ) , ifft_len//2 , axis = -1 ).astype( cls.precision )
+                corr_raw = np.roll( np.fft.irfft( cls.fourier_data[v] * np.conj( cls.fourier_data[w] ) , axis=0 ) , ifft_len//2 , axis = 0 ).astype( cls.precision )
                 cls.correlation[i,j,...] = corr_raw / np.max( corr_raw[(ifft_len//2-2):(ifft_len//2+2)] , axis=0 )
+
+                correlation_smallDictionary[w] = cls.correlation[i,j,...]
+            cls.correlation_dict[v] = correlation_smallDictionary
 
 class WaveletData():
     """

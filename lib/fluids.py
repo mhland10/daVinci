@@ -216,12 +216,10 @@ class compressibleGas:
         
         print("compressibleGas object created.")
 
-    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, key="U:X", wt_family="bior1.3", 
-                      level=-1, coeff_index=0, store_wavelet=False, nonuniform_dims=[" "], 
-                      filter_nan=True, gradient_order=None, window_lims=2 ):
+    def shockTracking(cls, input_data , input_spatial_domain, input_time_domain, kernel=np.array([-1, 0, 1]), key="U:x", gradient_order=None ):
         """
             In this method, the presence of a shock will be tracked throughout time. The method
-        uses the Discrete Wavelet Transform to track the discontinuity. 
+        uses the Canny edge finding technique to find the discontinuity in the data.
 
         Args:
             input_data (dict):      The data to be analyzed. Stored as a dictionary. Data arrays
@@ -236,45 +234,25 @@ class compressibleGas:
 
             input_time_domain (float):  The time domain of the data. This is a 1D array of time.
 
-            key (str, optional):    The key of the data that will be used to track the shock. 
-                                        Defaults to "U:X".
-
-            wt_family (str, optional):  The wavelet family that will find the shock. In general, it
-                                            is recommended to stick the default, and if another is
-                                            necessary, then one should select an odd wavelet that 
-                                            pywavelets has access to. Defaults to "bior1.3". 
-                                            Available wavelets are available at:
-
-                                        https://pywavelets.readthedocs.io/en/latest/ref/2d-dwt-and-idwt.html
-
-            level (int, optional):  The level of the wavelet transform that the shock will be 
-                                        tracked on. Defaults to -1.
+            kernel (numpy ndarray - float, optional):   The kernel to use for the shock tracking.
+                                                        Defaults to a simple [-1,0,1] kernel, which
+                                                        is a simple central differencing kernel.
                                         
         """
+
+        # Import modules
+        import scipy.signal as spsi
 
         # Check if the domain allows tracking a shock
         if cls.N_dims == 1:
             raise ValueError("The domain must have a time or second spatial axis to track a shock.")
 
-        # Define the wavelet object that will be used to track the shock
-        if store_wavelet:
-            cls.shock_wavelet = WaveletData( input_data , N_dims=cls.N_dims, wavelet_family=wt_family )
-            swt = cls.shock_wavelet
-        else:
-            shock_wavelet = WaveletData( input_data , N_dims=cls.N_dims, wavelet_family=wt_family )
-            swt = shock_wavelet
-
-        # Perform the wavelet transform on the data with the specified keys
-        if 't' in cls.dims:
-            swt.N_dims -= 1
-            swt.max_levels = pywt.dwtn_max_level( ( input_data[list(input_data.keys())[0]].shape[-1] ,), wt_family )
-        swt.waveletTransform([wt_family], keys=[key] )
-
         # Find the domain that represents the DWT
         used_domain = []
+        time_domain = 0
         if 't' in cls.dims:
             used_domain += [np.array(input_time_domain)]
-            swt.N_dims += 1
+            time_domain=1
         if 'x' in cls.dims:
             used_domain += [input_spatial_domain[0]]
         if 'y' in cls.dims: 
@@ -282,26 +260,36 @@ class compressibleGas:
         if 'z' in cls.dims:
             used_domain += [input_spatial_domain[2]]
         cls.used_domain = used_domain
-        swt.domains( used_domain )
+
+        #
+        #   Convolve the kernel to find the edge
+        #
+        cls.response = []
+        for i, t in enumerate( input_time_domain ):
+            print(f"Tracking shock at time {t:.3e} s (index {i})")
+
+            # Convolve the kernel along the spatial dimensions
+            cls.response += [spsi.convolve( input_data[key][i,...], kernel, method='auto', mode='valid' )]
+        cls.response = np.array( cls.response )
+            
+        # Calculate the index correction based on the padding of the convolution
+        padding_correction = int( ( len(kernel) - 1 ) // 2   )
 
         # Find the index of the shock location on a spatial domain that corresponds to the original 
         # data, but with the shape of the wavelet coefficients
-        if filter_nan:
-            cls.shock_loc_indx = np.nanargmax( np.abs( np.array(swt.coeffs[wt_family][key][level])[:,window_lims:-window_lims] ) , axis=-1 )+window_lims
-        else:
-            cls.shock_loc_indx = np.argmax( np.abs( np.array(swt.coeffs[wt_family][key][level])[:,window_lims:-window_lims] ) , axis=-1 )+window_lims
+        cls.shock_loc_indx = np.nanargmax( np.abs( cls.response ), axis=-1 ) + padding_correction
 
         # Set up alternative domain
         cls.shock_loc = []
         if 'x' in cls.dims:
             print(f"x data is in {cls.dims.index('x')}")
-            cls.x_pts = swt.domain[cls.dims.index('x')][level]
+            cls.x_pts = input_spatial_domain[cls.dims.index('x')-time_domain]
             cls.shock_loc += [cls.x_pts[cls.shock_loc_indx]]
         if 'y' in cls.dims:
-            cls.y_pts = swt.domain[cls.dims.index('y')][level]
+            cls.y_pts = input_spatial_domain[cls.dims.index('y')-time_domain]
             cls.shock_loc += [cls.y_pts[cls.shock_loc_indx]]
         if 'z' in cls.dims:
-            cls.z_pts = swt.domain[cls.dims.index('z')][level]
+            cls.z_pts = input_spatial_domain[cls.dims.index('z')-time_domain]
             cls.shock_loc += [cls.z_pts[cls.shock_loc_indx]]
         if 't' in cls.dims:
             cls.t_pts = input_time_domain
@@ -523,12 +511,13 @@ class turbulentShearMixingLayer:
         u_tildes = cls.favre_data["u"]
         rho_avg = cls.favre_data["rho"]
         DU = np.abs( u_tildes[-1] - u_tildes[0] )
+        U_c = ( cls.favre_data["u"][-1] + cls.favre_data["u"][0] ) / 2
         #integral_val = np.trapz( rho_avg * ( cls.U_c - u_tildes ) * ( cls.U_c + u_tildes ), cls.coords[cls.spanwise_coord] )
         integral_val = np.trapz( rho_avg * ( cls.favre_data["u"][-1] - cls.favre_data["u"] ) * ( cls.favre_data["u"] - cls.favre_data["u"][0] ), cls.coords[cls.spanwise_coord] )
         cls.delta_theta = integral_val / ( np.mean( rho_avg ) * ( DU ** 2 ) )
 
         # Calculate the vorticity thickness
-        cls.delta_omega = DU / np.max( np.gradient( u_tildes, cls.coords[cls.spanwise_coord] ) )
+        cls.delta_omega = ( DU + U_c ) / np.max( np.gradient( u_tildes, cls.coords[cls.spanwise_coord] ) )
 
         # Calculate empirical incompressilbe growth rate
         cls.delta_theta_dot_incompressible = C_delta * ( 1 - u_tildes[0]/u_tildes[-1] ) * ( 1 + np.sqrt( rho_avg[0] / rho_avg[-1] ) ) / ( 2 * ( 1 + (u_tildes[0]/u_tildes[-1]) * np.sqrt( rho_avg[0] / rho_avg[-1] ) ) )
@@ -545,7 +534,7 @@ class turbulentShearMixingLayer:
         du_dy = np.gradient( cls.favre_data["u"], cls.coords[cls.spanwise_coord] )
         dv_dy = np.gradient( cls.favre_data["v"], cls.coords[cls.spanwise_coord] )
         if turb_modeling:
-            cls.tke_budget["Production"] = 2 * cls.favre_data["nut"] * cls.favre_data["rho"] * ( 2 * ( du_dy ** 2 ) + ( dv_dy ** 2 ) )
+            cls.tke_budget["Production"] = 2 * cls.favre_data["nut"] * cls.favre_data["rho"] * ( 0.5 * ( du_dy ** 2 ) + ( dv_dy ** 2 ) )
             cls.tke_budget["Production"] -=  (2/3) * cls.favre_data["k"] * dv_dy
 
         # Calculate the dissipation
@@ -698,10 +687,10 @@ class turbulentShearMixingLayer:
         cls.R += np.nan_to_num( ( cls.stream_R[1] - cls.stream_R[0] ) * cls.T * Lewis_no / ( cls.stream_T[1] - cls.stream_T[0] ), nan=0 )
 
         # Initialize the pressure constants
-        cls.p = np.zeros( N_points )
+        #cls.p = np.zeros( N_points )
         cls.p = cls.rho * cls.R * cls.T
 
-    def turbulence_inletProfile(cls, average_viscosity, R_xx_NormalizedPeak=[ 0.175, 0.134, 0.145 ], R_xx_Baseline=[ 0.025, 0.025, 0.010 ], epsilon_NormalizedPeak=1.2e-3, distribution_method="pdf", conversion_turbulenceModels=None, ke_coefficients={ "C_mu": 0.09 }, ko_coefficients={ "beta_star":0.09 }, SA_coefficients= { "C_v1": 7.1 }, minimum_dissipation=200.0e6, minimum_specDissipation=10e3, N_smoothing=1 ):
+    def turbulence_inletProfile(cls, average_viscosity, R_xx_NormalizedPeak=[ 0.175, 0.134, 0.145 ], R_xx_Baseline=[ 0.025, 0.025, 0.010 ], epsilon_NormalizedPeak=1.2e-3, distribution_method="pdf", conversion_turbulenceModels=None, ke_coefficients={ "C_mu": 0.09 }, ko_coefficients={ "beta_star":0.09 }, SA_coefficients= { "C_v1": 7.1 }, minimum_dissipation=100, minimum_specDissipation=0, N_smoothing=1 ):
         """
             This method generates profiles of the turbulence according to the methods outlined in 
         [43]. 
@@ -757,7 +746,7 @@ class turbulentShearMixingLayer:
             import scipy.stats as spst
 
             # Set the baseline values
-            cls.TKE += ( np.linalg.norm( np.array( R_xx_Baseline ) ) * cls.DeltaU ) ** 2
+            cls.TKE += ( np.linalg.norm( np.array( R_xx_Baseline ) ) * cls.u[cls.streamwise] ) ** 2
 
             # Set the PDF base profile
             PDF_raw = spst.norm.pdf( cls.domain[cls.streamwise+1], loc=0, scale=cls.delta_theta0 )
@@ -767,11 +756,14 @@ class turbulentShearMixingLayer:
             R_xx_rescale = np.array( R_xx_NormalizedPeak ) - np.array( R_xx_Baseline )
             
             # Add peak to TKE
-            cls.TKE += cls.PDF * ( np.linalg.norm( R_xx_rescale ) * cls.DeltaU ) ** 2
+            cls.TKE += cls.PDF * ( np.linalg.norm( R_xx_rescale ) * cls.u[cls.streamwise] ) ** 2
 
             # Add distribution to epsilon
             disp_pdf = np.convolve( cls.PDF, np.ones( N_smoothing ) / N_smoothing, mode="same" )
-            cls.dissipation += np.sqrt( disp_pdf / np.max(disp_pdf) ) * ( epsilon_NormalizedPeak * ( cls.DeltaU ** 3 ) / cls.delta_theta0 )
+            #disp_pdf = np.ones_like( cls.PDF )
+            #cls.dissipation += np.sqrt( disp_pdf / np.max(disp_pdf) ) * ( epsilon_NormalizedPeak * cls.DeltaU * ( cls.u[cls.streamwise] ** 2 ) / cls.delta_theta0 )
+            #cls.dissipation += np.sqrt( disp_pdf / np.max(disp_pdf) ) * ( epsilon_NormalizedPeak * cls.u[cls.streamwise] * ( cls.DeltaU ** 2 ) / cls.delta_theta0 )
+            cls.dissipation += np.sqrt( disp_pdf / np.max(disp_pdf) ) * ( epsilon_NormalizedPeak *  ( cls.DeltaU ** 3 ) / cls.delta_theta0 )
 
             cls.dissipation = np.maximum( cls.dissipation , minimum_dissipation * np.ones_like( len(cls.dissipation ) ) )
             #cls.dissipation = np.maximum( cls.dissipation , (ke_coefficients["C_mu"]**(3/4))*(cls.TKE**(3/2)) / cls.delta_theta0 )
@@ -793,14 +785,16 @@ class turbulentShearMixingLayer:
                     spec_dissipation_max = np.max( cls.TKE ) / mut_max
 
                     #cls.spec_dissipation = cls.rho * cls.PDF * spec_dissipation_max + minimum_specDissipation
-                    cls.spec_dissipation = ( cls.dissipation ) / ( cls.TKE * ko_coefficients["beta_star"] )
-                    #cls.spec_dissipation = ( cls.mut / cls.rho ) / ( ko_coefficients["beta_star"] * cls.TKE )
+                    #cls.spec_dissipation = ( cls.dissipation ) / ( cls.TKE * ko_coefficients["beta_star"] )
+                    cls.spec_dissipation = ( ko_coefficients["beta_star"] * cls.TKE ) / ( cls.mut / cls.rho )
+                    cls.spec_dissipation = np.maximum( cls.spec_dissipation , minimum_specDissipation * np.ones_like( len(cls.spec_dissipation ) ) )
 
                 if model.lower() in ["spalart allmaras", "spalart-allmaras", "sa"]:
 
                     base_dynVisc = average_viscosity / cls.rho_avg
 
-                    nu_tilde_0 = base_dynVisc * np.ones_like( cls.mut )
+                    #nu_tilde_0 = base_dynVisc * np.ones_like( cls.mut )
+                    nu_tilde_0 = cls.mut / cls.rho
 
                     def nut_result( nu_tilde ):
                         """
@@ -873,7 +867,7 @@ class boundaryLayer:
         self.coordinates = coordinates
 
 
-    def data_import(cls, data_dictionary, velocity_keys=["U:x", "U:y", "U:z"], pressure_key="p", temperature_key="T", density_key="rho", nu_T_key="nut" ):
+    def data_import(cls, data_dictionary, velocity_keys=["U:x", "U:y", "U:z"], pressure_key="p", temperature_key="T", density_key="rho", nu_T_key="nut", turbulence_keys=[] ):
         """
             Import the needed data into the boundaryLayer object.
 
@@ -923,6 +917,15 @@ class boundaryLayer:
         if nu_T_key:
             cls.nu_T_key = nu_T_key
             cls.data[nu_T_key] = data_dictionary[nu_T_key]
+
+        # Import turbulence data keys
+        if len(turbulence_keys)>0:
+            cls.turbulence_keys = turbulence_keys
+        for k in turbulence_keys:
+            if k in data_dictionary:
+                cls.data[k] = data_dictionary[k]
+            else:
+                print( f"WARNING: Turbulence key '{k}' not found in data dictionary." )
 
 
     def boundaryLayerThickness_calculation(cls, threshold=0.99):
@@ -1027,7 +1030,9 @@ class boundaryLayer:
         # Calculate friction velocity
         cls.u_tau = np.zeros( cls.N_timeSteps )
         for i in range( cls.N_timeSteps ):
-            tau_w = nu_wall * np.gradient( cls.data[cls.vel_keys[0]][i], cls.coordinates[1] )[0]
+            tau_w = nu_wall[i] * np.gradient( cls.data[cls.vel_keys[0]][i], cls.coordinates[1] )[0]
+            #print(f"nu_wall={nu_wall}")
+            #print(f"tau_w={tau_w}")
             cls.u_tau[i] = np.sqrt( tau_w )
 
         #=============================================================
@@ -1035,9 +1040,6 @@ class boundaryLayer:
         #   Calculate profile
         #
         #=============================================================
-
-        # Calculate law of the wall velocity
-        cls.u_plus = cls.data[cls.vel_keys[0]] / cls.u_tau
 
         # Calculate the viscosity profiles
         if nu_wall is None or isinstance( nu_wall, (int, float ) ):
@@ -1059,9 +1061,115 @@ class boundaryLayer:
                     nus = mus / rhos
         cls.nus = nus
 
+        # Calculate law of the wall velocity
+        cls.u_plus = np.zeros_like(cls.data[cls.vel_keys[0]])
+        for i, u_t in enumerate( cls.u_tau ):
+            cls.u_plus[i] = cls.data[cls.vel_keys[0]][i] / u_t
 
         # Calculate the law of the wall coordinates
-        cls.y_plus = cls.coordinates[1] * cls.u_tau / nus
+        cls.y_plus = np.zeros_like( cls.u_plus )
+        for i, u_t in enumerate( cls.u_tau ):
+            cls.y_plus[i] = cls.coordinates[1] * u_t / nus[i]
+
+    def profile_export(cls, output_name, write_dir=None, time_index=-1 ):
+        """
+            Export the boundary layer profile data.
+
+        Args:
+            output_name (str):  The name of the output file to append the data name to.
+
+            write_dir (str, optional):  The directory to write the data to.
+
+        """
+
+        #
+        # Move to write directory if available
+        #
+        if write_dir:
+            import os
+            os.chdir( write_dir )
+
+        #=============================================================
+        #
+        #   Export the velocity profile
+        #
+        #=============================================================
+        with open( f"{output_name}_velocityProfile.dat", "w" ) as f:
+            f.write("(\n") # Opening parenthesis for OpenFOAM format
+
+            for j in range(len(cls.coordinates[1])):
+                y = cls.coordinates[1][j]
+                # each line: (y (Ux Uy (0) Uz (0)))
+                f.write(f"({y}\t({cls.data[cls.vel_keys[0]][time_index][j]} 0 0))\n")
+
+            f.write(")\n") # Closing parenthesis for OpenFOAM format
+
+        #=============================================================
+        #   
+        #   Export the temperture profile
+        #
+        #=============================================================
+        if hasattr( cls, "temperature_key" ):
+            with open( f"{output_name}_temperatureProfile.dat", "w" ) as f:
+                f.write("(\n") # Opening parenthesis for OpenFOAM format
+
+                for j in range(len(cls.coordinates[1])):
+                    y = cls.coordinates[1][j]
+                    # each line: (y T)
+                    f.write(f"({y}\t{cls.data[cls.temperature_key][time_index][j]})\n")
+
+                f.write(")\n") # Closing parenthesis for OpenFOAM format
+
+        #=============================================================
+        #
+        #   Export the pressure profile
+        #
+        #=============================================================
+        if hasattr( cls, "pressure_key" ):
+            with open( f"{output_name}_pressureProfile.dat", "w" ) as f:
+                f.write("(\n") # Opening parenthesis for OpenFOAM format
+
+                for j in range(len(cls.coordinates[1])):
+                    y = cls.coordinates[1][j]
+                    # each line: (y p)
+                    f.write(f"({y}\t{cls.data[cls.pressure_key][time_index][j]})\n")
+
+                f.write(")\n") # Closing parenthesis for OpenFOAM format
+
+        #=============================================================
+        #
+        #   Export the density profile
+        #
+        #=============================================================
+        if hasattr( cls, "density_key" ):
+            with open( f"{output_name}_densityProfile.dat", "w" ) as f:
+                f.write("(\n") # Opening parenthesis for OpenFOAM format
+
+                for j in range(len(cls.coordinates[1])):
+                    y = cls.coordinates[1][j]
+                    # each line: (y rho)
+                    f.write(f"({y}\t{cls.data[cls.density_key][time_index][j]})\n")
+
+                f.write(")\n") # Closing parenthesis for OpenFOAM format
+
+
+        #=============================================================
+        #
+        #   Export the turbulence profile
+        #
+        #=============================================================
+        if hasattr( cls, "turbulence_keys" ):
+            for key in cls.turbulence_keys:
+                with open( f"{output_name}_{key}Profile.dat", "w" ) as f:
+                    f.write("(\n") # Opening parenthesis for OpenFOAM format
+
+                    for j in range(len(cls.coordinates[1])):
+                        y = cls.coordinates[1][j]
+                        # each line: (y turbulence_key)
+                        f.write(f"({y}\t{cls.data[key][time_index][j]})\n")
+
+                    f.write(")\n") # Closing parenthesis for OpenFOAM format
+
 
 
 
