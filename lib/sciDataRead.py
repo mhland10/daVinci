@@ -911,7 +911,7 @@ class dataReader:
         # Return to original directory
         os.chdir(og_dir)
 
-    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="rbf", coords_system=['x','y','z'], mp_method=None, headers_exclude=[], verbosity=1, N_srcPts=1000 ):
+    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="rbf", coords_system=['x','y','z'], mp_method=None, headers_exclude=[], verbosity=1, N_srcPts=1000, small_time=1e-18 ):
         """
             This method takes the data from a *.h5 file or such and imports it using h5py rather 
         than Paraview, which is very slow.
@@ -966,6 +966,9 @@ class dataReader:
         # Switch between interpolation reading and raw reading
         #
         if not cls.read_raw:
+            
+            print("\n\nWe are not reading raw")
+        
 
             #
             # Import time step from file format
@@ -990,7 +993,7 @@ class dataReader:
                 valid_lims = [v for v in cls.t_lims if v is not None]
                 t_min, t_max = np.min(valid_lims), np.max(valid_lims)
                 t_steps = cls.time_steps[ (cls.time_steps >= t_min) & (cls.time_steps <= t_max)]
-            
+                            
             #
             # Set up the coordinates into numpy array/matrices, if not time dependent
             #
@@ -1006,9 +1009,10 @@ class dataReader:
                             obj_coordinates[:,i] = raw_coordinates[:,j] 
                 #print(f"The object coordinates are in shape:\t{np.shape(obj_coordinates)}")
                 cls.obj_coordinates = obj_coordinates
-                data_shape = ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,)
+                data_shape = ( len(t_steps) ,) + ( len( obj_coordinates[:,0] ) ,)
             else:
-                data_shape = ( len(cls.time_steps) ,) + ( len( cls.points[0] ) ,)
+                data_shape = ( len(t_steps) ,) + ( len( cls.points[0] ) ,)
+            
 
             # Initialize our data
             data_file_path = "/".join(group_path)
@@ -1021,24 +1025,30 @@ class dataReader:
             cls.data={}
             for k in data_keys:
                 cls.data[k] = np.zeros( data_shape )
+                
+            
             
             # Find the number of non-excluded headers
             to_keep = np.setdiff1d(data_keys, headers_exclude)
             keep_count = to_keep.size
             cls.to_keep = to_keep
+            
+            
 
             #
             # Go through the time steps and interpolate the data
             #
             if not mp_method:
-                for i in range( len(cls.time_steps) ):
+                for i in range( len(t_steps) ):
                     
-                    fl_nm = cls.file_list[i]
-                    t_step = cls.time_steps[i]
+                    print(f"\n\nworking on time step {t_steps[i]:.3e}")
+                    print(f"\twhich is index {np.abs(cls.time_steps-t_steps[i])<=small_time}")
+                    
+                    fl_nm = np.array(cls.file_list)[np.abs(cls.time_steps-t_steps[i])<=small_time][0]
+                    t_step = t_steps[i]
                     if verbosity>0:
                         print(f"Working on data index:\t{i}")
                         print(f"Working with file:\t{fl_nm}")
-
 
                     #
                     # Set up the coordinates into numpy array/matrices, if time dependent
@@ -1046,7 +1056,6 @@ class dataReader:
                     if cls.time_dependent:
                         obj_coordinates = cls.points[i,:,:N_dims]
                         cls.obj_coordinates = obj_coordinates
-                        """
                         # Initialize our data
                         data_file_path = "/".join(group_path)
                         with h5.File( cls.file_list[1], 'r') as f:
@@ -1058,7 +1067,6 @@ class dataReader:
                         cls.data={}
                         for k in data_keys:
                             cls.data[k] = np.zeros( ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,) )
-                        #"""
 
                     #
                     # Open the h5 file and deposit data
@@ -1096,10 +1104,15 @@ class dataReader:
                                 data_raw[:,j] = group[to_keep[j]][:]
                         #mask = ~(np.all(data_raw == 0, axis=1) )#| np.isnan(data_raw).all(axis=1))
                         #data_raw = data_raw[mask]
-                            
                         
                     if verbosity>1:
                         print("**Data pull complete**")
+                    
+                    if verbosity>2:    
+                      print("coordinates shape:", coordinates.shape, flush=True)
+                      print("data_raw shape:", data_raw.shape, flush=True)
+                      print("obj_coordinates shape:", obj_coordinates.shape, flush=True)
+                      print("NaNs in data:", np.isnan(data_raw).any(), flush=True)
 
                     #
                     # Do the interpolation
@@ -1119,6 +1132,8 @@ class dataReader:
                     data_array[i,...] = data_interpolator_raw
                     if verbosity>1:
                         print("**Interpolation complete**")
+                        
+            
 
                     #
                     # Move data into dictionary
@@ -1132,12 +1147,17 @@ class dataReader:
                         #print(f"\tMin Data:\t{np.min(cls.data[k][i,...])}")
                         #print(f"\tMax Data:\t{np.max(cls.data[k][i,...])}")
                         #print(f"\tMean Data:\t{np.mean(cls.data[k][i,...])}")
+                        
+            """
 
             else:
                 raise ValueError("Invalid multiprocessing method chosen.")
+                
+            #"""
             
         else:
-
+            
+            """
             #
             # Import time step from file format
             #
@@ -1260,6 +1280,10 @@ class dataReader:
                     #print(f"\tMin Data:\t{np.min(cls.data[k][i,...])}")
                     #print(f"\tMax Data:\t{np.max(cls.data[k][i,...])}")
                     #print(f"\tMean Data:\t{np.mean(cls.data[k][i,...])}")
+                    
+                """
+            print("Hello there, reading raw data are we?")
+                
 
     def hdf5Write( cls , filename , working_dir, skip_headers=[] ):
         """
