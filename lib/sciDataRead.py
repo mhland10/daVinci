@@ -1185,6 +1185,8 @@ class dataReader:
                         #print(f"\tMin Data:\t{np.min(cls.data[k][i,...])}")
                         #print(f"\tMax Data:\t{np.max(cls.data[k][i,...])}")
                         #print(f"\tMean Data:\t{np.mean(cls.data[k][i,...])}")
+
+                cls.time_steps = t_steps
                         
             """
 
