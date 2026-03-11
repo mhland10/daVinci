@@ -148,9 +148,10 @@ class dataReader:
         # Set the time limits
         self.t_lims = t_lims
 
-    def foamCaseRead_paraview( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
+    def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
                      coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, 
-                     headers_read=None, headers_drop=[], N_sourcePts=1000, allow_dim_drop=True, engine="paraview" ):
+                     headers_read=None, headers_drop=[], N_sourcePts=1000, allow_dim_drop=True, 
+                     engine="paraview", store_caseData_2disk=False, store_data_2disk=False ):
         """
             This reader reads an OpenFOAM case using Paraview - Legacy, but slow
 
@@ -187,7 +188,8 @@ class dataReader:
 
                                                 Not cases sensitive.
 
-            accelerator (string, optional):    The accelerator that will be used. The valid options are:
+            accelerator (string, optional):    The accelerator that will be used. The valid options
+                                                are:
 
                                                 - *None:   No accelerator will be used.
 
@@ -196,7 +198,48 @@ class dataReader:
 
                                                 Not case sensitive.          
 
-            headers_read                                  
+            headers_read (list, optional):    The list of headers that will be read from the 
+                                                OpenFOAM case. If None, then it will just read all
+                                                the headers. Defaults to None.                
+
+            headers_drop (list, optional):    The list of headers that will be dropped from the
+                                                OpenFOAM case. If None, then it will not drop any
+                                                headers. Defaults to [].
+
+            N_sourcePts (int, optional):    The number of source points that will be used in the
+                                            interpolation. Decreasing this noumber allows larger 
+                                            cases and outputs to be read, but at the cost of 
+                                            accuracy. Defaults to 1000. Feeds into SciPy's 
+                                            RBFInterpolator as the "neighbors" argument.
+
+            allow_dim_drop (boolean, optional):     Whether the reader will allow a dimension to be
+                                                    dropped.
+
+            engine (string, optional):    The engine that will be used to read the data. The valid
+                                            options are:
+
+                                            - *"paraview":   The Paraview engine will be used to 
+                                                            read the data. This is the default, 
+                                                            and the only currently implemented 
+                                                            option.
+
+            store_caseData_2disk (boolean, optional):   Whether the reader will store the raw case 
+                                                        data to the disk at every time step via 
+                                                        NumPy's memmap function. This is useful for
+                                                        very large datasets so that this method is
+                                                        not limited by RAM. Defaults to False. Note
+                                                        that this does limit the CuPy functionality
+                                                        but this is to be expected since the data is
+                                                        stored on the disk and not in GPU memory.
+
+            store_data_2disk (boolean, optional):   Whether the reader will store the object's data
+                                                    to the disk at every time step via NumPy's 
+                                                    memmap function. This is useful for very large 
+                                                    datasets so that this method is not limited by 
+                                                    RAM. Defaults to False. Note that this does 
+                                                    limit the CuPy functionality but this is to be 
+                                                    expected since the data is stored on the disk 
+                                                    and not in GPU memory.
 
         """
         # Move to the working directory
@@ -332,18 +375,23 @@ class dataReader:
             if verbosity>1:
                 for k in list( data_dict.keys() ):
                     print( f"Key {k} has shape {data_dict[k].shape}" )
+            if store_caseData_2disk:
+                data_matrix = np.memmap( f"caseData_t{t}.dat", dtype='float64', mode='w+', shape=np.array([ data_dict[k][...,0] for k in list( data_dict.keys() ) ]).shape )
             data_matrix = np.array([ data_dict[k][...,0] for k in list( data_dict.keys() ) ])
             cls.data_matrix = data_matrix
 
             # If time dependent, set the points to be this time step
             if cls.time_dependent:
+                if store_caseData_2disk:
+                    points_use = np.memmap( f"points_t{t}.dat", dtype='float64', mode='w+', shape=cls.points[j,...].shape )
                 points_use = cls.points[j,...]
             else:
+                if store_caseData_2disk:
+                    points_use = np.memmap( f"points.dat", dtype='float64', mode='w+', shape=cls.points.shape )
                 points_use = cls.points
 
             # Print summary
             if verbosity>1:
-
                 # Combine coordinates and field data
                 full_data = {"coordinates": cell_coords}
                 full_data.update(data_dict)
@@ -354,12 +402,18 @@ class dataReader:
                 if "U" in full_data:
                     print("First 5 velocity vectors:\n", full_data["U"][:5])
 
+            # Set up the object data
+            if store_data_2disk:
+                object_data = np.memmap( f"objectData_t{t}.dat", dtype="float64", mode="w+", shape=(points_use.shape[0], data_matrix[0] ))
+
             # Interpolate onto the points
             if interpolator.lower() in ["rbf", "rbfinterpolator","radial basis function", "radialbasisfunction"]:
                 if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ) and allow_dim_drop:
                     #print("Actually, it's 1D")
                     drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
                     print(f"Dropping dimension {drop_dim}")
+                    # Set up disk-store data
+                    
                     object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( points_use[:,:N_dims], drop_dim, axis=1 ) )
                 else:
                     object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( points_use[:,:N_dims] )
@@ -394,70 +448,7 @@ class dataReader:
                     cls.data[k] = np.array( cls.data[k] )
                 except:
                     raise Warning( "The data is not truly time dependent" )
-                
-    def foamCaseRead( cls, case_dir, headers_read=["U", "p" ], static_mesh=True, coordinate_system=['x', 'y', 'z'] ):
-        """
-            This method is a faster way to read OpenFOAM via foamlib. This avoids the Paraview 
-        conversion issues.
-
-        Args:
-            case_dir (string):  The directory of the case.
-
-            headers_read (list, optional): The data headers to read from each of the time steps. 
-                                            The method auto-detects when the headers are not 
-                                            present and will instead leave it blank. Defaults to 
-                                            ["U", "p" ].
-
-            static_mesh (boolean, optional):   Whether the mesh is static or dynamic. If static,
-                                                the mesh is only read once, which will be a bit 
-                                                faster. Defaults to True.
-
-            coordinate_system (list, optional):    The coordinate system that will be used. Applies
-
-        """
-
-        #
-        #   Import modules
-        #
-        from foamlib import FoamFile, FoamCase
-        import numpy as np
-        import os
-
-        #
-        #   Pull the mesh data
-        #
-        if static_mesh:
-            print("Reading static mesh...")
-            mesh_points_path = os.path.join( case_dir, "constant", "polyMesh", "points" )
-            mesh_points = FoamFile(mesh_points_path)
-        else:
-            print("Dynamic mesh reading not yet implemented.")
-
-        #
-        #   Pull the time steps
-        #
-        cls.case = FoamCase( case_dir )
-        time_steps = np.array([ float(t.name) for t in cls.case ])
-        print(f"We have {time_steps} time steps available.")
-        mask=np.ones_like( time_steps , dtype=bool )
-        if cls.t_lims[0] is not None:
-            mask &= ( time_steps >= cls.t_lims[0] )
-        if cls.t_lims[1] is not None:
-            mask &= ( time_steps <= cls.t_lims[1] )
-        cls.time_steps = time_steps[ mask ]
-
-        #=============================================================
-        #
-        #   Read the data at each time step
-        #
-        #=============================================================
-        for i, t in enumerate( cls.time_steps ):
-            print(f"Reading time step {t} at index {i}...")
-
-            # Pull the time step object
-            time_obj = cls.case.get_time( str(t) )
-
-        
+                        
 
     def paraviewDataRead( cls , working_dir , trim_headers=["vtkValidPointMask"] , coords = ["X","Y","Z"], data="point" ):
         """
@@ -628,7 +619,10 @@ class dataReader:
                 cls.data_dict.pop(p)
         cls.data = cls.data_dict
         
-    def convergeH5DataRead( cls , working_dir , data_prefix="data_ts" , sig_figs=6 , N_dims=3 , interpolator="RBF" , overwrite=False , write=True , rm_after_read=False , mp_method=None , N_cores=None, accelerator=None, headers_exclude=[], fill_value=None ):
+    def convergeH5DataRead(cls, working_dir, data_prefix="data_ts", sig_figs=6, N_dims=3, 
+                        interpolator="RBF", overwrite=False, write=True, rm_after_read=False,
+                        mp_method=None, N_cores=None, accelerator=None, headers_exclude=[], 
+                        fill_value=None, store_caseData_2disk=False, store_data_2disk=False ):
         """
         This method reads the data using the Converge engine and stores the data in the rake object
             in a dictionary.
@@ -911,7 +905,11 @@ class dataReader:
         # Return to original directory
         os.chdir(og_dir)
 
-    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="rbf", coords_system=['x','y','z'], mp_method=None, headers_exclude=[], verbosity=1, N_srcPts=1000, small_time=1e-18 ):
+    def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], 
+                     coord_prefix="XCEN", dims=['x','y','z'], interpolator="rbf", 
+                     coords_system=['x','y','z'], mp_method=None, headers_exclude=[], verbosity=1, 
+                     N_srcPts=1000, small_time=1e-18, store_caseData_2disk=False, 
+                     store_data_2disk=False ):
         """
             This method takes the data from a *.h5 file or such and imports it using h5py rather 
         than Paraview, which is very slow.
@@ -951,6 +949,36 @@ class dataReader:
                                                                         interpolator. Uses Delaunay
                                                                         triangulation.
 
+            coords_system (list, optional): The coordinates of the source data. The default is 
+                                            ['x', 'y', 'z'], which is the default for ConvergeCFD.
+
+            mp_method (string, optional):   The multiprocessing method to use. Doesn't work yet 
+                                            (TODO), leave as the default, None.
+
+            headers_exclude (list, optional):   The headers from the hdf5 case to exclude. Note 
+                                                that this is case sensitive. The default is [], 
+                                                which keeps all the headers.
+
+            verbosity (int, optional):  How much output to include. Default is 1.
+
+            N_srcPts (int, optional):   How many points to use for each result point in the RBF 
+                                        interpolator. Defaults to 1,000. Note that increasing this 
+                                        value increases accuracy at the cost of needing more memory 
+                                        space, and vice-versa.
+
+            small_time (float, optional):   The smallest allowable time step in the data. Defaults 
+                                            to 1e-18, which seems absurdly small for a CFD case.
+
+            store_caseData_2disk (bool, optional):  Whether or not the method will place the source
+                                                    data on the disk. This is helpful because then
+                                                    the data is very large, you can store it to the
+                                                    disk to save memory space. However, this does
+                                                    make things run slower. Defaults to False.
+
+            store_data_2disk (bool, optional):  Whether or not the method will place the resulting
+                                                data onto the disk. This is helpful for large cases
+                                                to expand how much memory can be used. This does 
+                                                make things run slower. Defaults to False.
 
         """
 
@@ -1009,6 +1037,7 @@ class dataReader:
                             obj_coordinates[:,i] = raw_coordinates[:,j] 
                 #print(f"The object coordinates are in shape:\t{np.shape(obj_coordinates)}")
                 cls.obj_coordinates = obj_coordinates
+            if store_caseData_2disk:
                 data_shape = ( len(t_steps) ,) + ( len( obj_coordinates[:,0] ) ,)
             else:
                 data_shape = ( len(t_steps) ,) + ( len( cls.points[0] ) ,)
@@ -1020,20 +1049,23 @@ class dataReader:
                 group = f[data_file_path]
                 keys = list(group.keys())
                 data_keys = [key for key in keys if not key.startswith(coord_prefix)]
-            data_array = np.zeros( data_shape + ( len(data_keys) ,) )
+            if store_caseData_2disk:
+                data_array = np.memmap( f"dataArray.dat", dtype="float64", mode="w+", shape= data_shape + ( len(data_keys) ,) )
+            else:
+                data_array = np.zeros( data_shape + ( len(data_keys) ,) )
             #print(f"Data array shape is {np.shape(data_array)}")
             cls.data={}
-            for k in data_keys:
-                cls.data[k] = np.zeros( data_shape )
+            if not cls.time_dependent and store_caseData_2disk:
+                for k in data_keys:
+                    cls.data[k] = np.memmap( f"data_{k}.dat", dtype="float64", mode="w+", shape= data_shape )
+            else:
+                for k in data_keys:
+                    cls.data[k] = np.zeros( data_shape )
                 
-            
-            
             # Find the number of non-excluded headers
             to_keep = np.setdiff1d(data_keys, headers_exclude)
             keep_count = to_keep.size
             cls.to_keep = to_keep
-            
-            
 
             #
             # Go through the time steps and interpolate the data
@@ -1066,7 +1098,10 @@ class dataReader:
                         #print(f"Data array shape is {np.shape(data_array)}")
                         cls.data={}
                         for k in data_keys:
-                            cls.data[k] = np.zeros( ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,) )
+                            if store_caseData_2disk:
+                                cls.data[k] = np.memmap( f"data_t{t_steps[i]}_{k}.dat", dtype="float64", mode="w+", shape= ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,) )
+                            else:
+                                cls.data[k] = np.zeros( ( len(cls.time_steps) ,) + ( len( obj_coordinates[:,0] ) ,) )
 
                     #
                     # Open the h5 file and deposit data
@@ -1097,7 +1132,10 @@ class dataReader:
                         # Store the data into an array for interpolation
                         data_keys = [key for key in keys if not key.startswith(coord_prefix)]
                         #print(f"The data keys are:\t{data_keys}")
-                        data_raw = np.zeros( ( len( group[coord_keys[0]] ) ,) + ( len(data_keys) ,) )
+                        if store_caseData_2disk:
+                            data_raw = np.memmap( f"rawData_t{t_steps[i]}.dat", dtype="float64", mode="w+", shape = ( len( group[coord_keys[0]] ) ,) + ( len(data_keys) ,) )
+                        else:
+                            data_raw = np.zeros( ( len( group[coord_keys[0]] ) ,) + ( len(data_keys) ,) )
                         #print(f"Raw data shape:\t{np.shape(data_raw)}")
                         for j in range( len( to_keep ) ):
                             if True:
