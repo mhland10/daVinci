@@ -866,6 +866,9 @@ class boundaryLayer:
         # Store the coordinates
         self.coordinates = coordinates
 
+        # Initialize the viscous method
+        self.visc_method = None
+
 
     def data_import(cls, data_dictionary, velocity_keys=["U:x", "U:y", "U:z"], pressure_key="p", temperature_key="T", density_key="rho", nu_T_key="nut", turbulence_keys=[] ):
         """
@@ -1170,11 +1173,254 @@ class boundaryLayer:
 
                     f.write(")\n") # Closing parenthesis for OpenFOAM format
 
+    def viscosityModel(cls, T, method="sutherland", sutherland_coeffs={ "T_0":273.15, "S":110.4, "C_1":1.458e-6, "mu_0":17.16e-6, "R":287 } ):
+        """
+            This method calculates the viscosity profile for the boundary layer according to the
+        specified method.
+
+        Args:
+            T (float, NumPy 1D array): The temperature profile to calculate the viscosity from.
+
+            method (str, optional): The method to calculate the viscosity profile. The valid
+                                    options are:
+
+                                    "sutherland" or "s":    Uses Sutherland's law
+
+                                    *None*: Use the freestream viscosity
+
+                                    <float> or <int>: A known value for the viscosity
+
+        """
+        if method is None:
+            raise ValueError( "Viscosity method has not been set" )
+        if cls.visc_method is None:
+            cls.visc_method = method
+
+        if method.lower() in ["sutherland", "s"]:
+            cls.visc_coeffs = sutherland_coeffs
+            Ts = T
+            mus = cls.visc_coeffs["mu_0"] * ( ( Ts / cls.visc_coeffs["T_0"] ) ** 1.5 ) * ( ( cls.visc_coeffs["T_0"] + cls.visc_coeffs["S"] ) / ( Ts + cls.visc_coeffs["S"] ) )
+
+        return mus
+            
+
+
+    def syntheticCompressibleProfile(cls, Ma_infty, T_infty, rho_infty, x_ref, N_pts=500, y_plus_bounds=[0.3, 500], kappa=0.41, C_plus=5.0, k=1.4, R=287, Pr=0.72, T_w="adiabatic", BL_threshold=0.99, gradP=0, grad_yT=0, mixing_length=25, turbulent=True, sample_profile="log", velocity_profile="VD2" ):
+        """
+            This function generates a synthetic compressible boundary layer according to the method
+        outlined by White & Majdalani's **Viscous Fluid Flow**, section 7-7. 
+
+        Args:
+            Ma_infty (float):   The freestream Mach number.
+
+            T_infty (float):    The freestream temperature.
+
+            rho_infty (float):  The freestream density.
+
+            N_pts (int, optional):  The number of points to generate in the profile. Defaults to 
+                                    500.
+
+            y_plus_bounds (list, optional):     The bounds for the y^+ coordinates. Defaults to 
+                                                [0.3, 500].
+
+            k (float, optional):    The specific heat ratio. Defaults to 1.4, the value for air.
+
+            Pr (float, optional):    The Prandtl number. Defaults to 0.72, the value for air.
+
+            T_w (float, str, optional):    The wall temperature. The valid options are:
+
+                                            *float* or *int*: A known value for the wall temperature.
+
+                                            "adiabatic" or "a": Use the adiabatic wall temperature, 
+                                                                which uses the recovery temperature
+                                                                from White & Majdalani's **Viscous 
+                                                                Fluid Flow**, section 7-7.
+
+                                            
+
+
+        """
+        import numbers
+
+        #=============================================================
+        #
+        #   Initialize the profile
+        #
+        #=============================================================
+
+        # Coordinates
+        if sample_profile.lower() in ["log", "logarithmic", "log law"]:
+            cls.y_plus = np.logspace( np.log10( y_plus_bounds[0] ), np.log10( y_plus_bounds[1] ), num=N_pts )
+        elif sample_profile.lower() in ["linear", "lin"]:
+            cls.y_plus = np.linspace( y_plus_bounds[0], y_plus_bounds[1], num=N_pts )
+        else:
+            raise ValueError( "Invalid profile type" )
+
+        # Wall temperature
+        if isinstance( T_w, numbers.Number ):
+            Beta=None
+            cls.T_wall = T_w
+        elif T_w.lower() in ["adiabatic", "a"]:
+            cls.T_wall = T_infty * ( 1.0 + (Pr**(1/3)) * ( (k - 1.0) / 2.0 ) * Ma_infty**2 )
+            Beta = 0
+        else:
+            raise ValueError( "Invalid wall temperature method" )
+        
+        # Reference temperature
+        cls.T_r = T_infty * ( 1 + 0.032 * Ma_infty**2 + 0.58 * ( ( cls.T_wall / T_infty ) - 1 ) )
+
+        # Freestream viscosity
+        cls.mu_infty = cls.viscosityModel( T_infty, method="sutherland" )
+        
+        # Wall viscosity value
+        cls.mu_wall = cls.viscosityModel( cls.T_wall, method="sutherland" )
+        cls.nu_wall = cls.mu_wall / ( rho_infty * ( T_infty / cls.T_wall ) )
+
+        # Reference viscosity value
+        cls.mu_r = cls.viscosityModel( cls.T_r, method="sutherland" )
+        cls.nu_r = cls.mu_r / ( rho_infty * ( T_infty / cls.T_r ) )
+
+        # Wall density
+        cls.rho_wall = rho_infty * ( T_infty / cls.T_wall )
+
+        # Reference density
+        cls.rho_r = rho_infty * ( T_infty / cls.T_r )
+
+        # Freestream velocity
+        cls.U_infty = Ma_infty * np.sqrt( k * R * T_infty )
+
+        # Reynolds number at reference length
+        cls.Re_xRef = ( rho_infty * cls.U_infty * x_ref ) / cls.mu_infty
+        cls.Re_xr = ( cls.rho_r * cls.U_infty * x_ref ) / cls.mu_r
+
+        # Calculate skin friction coefficient
+        if turbulent:
+            cls.C_f = 0.0576 / ( cls.Re_xr ** (1/5) )
+        else:
+            cls.C_f = 0.664 / np.sqrt( cls.Re_xr )
+
+        # Calculate shear stress
+        cls.tau_w = 0.5 * cls.C_f * rho_infty * cls.U_infty**2
+
+        # Calculate friction velocity
+        cls.u_tau = np.sqrt( cls.tau_w / cls.rho_wall )
+
+        # Calculate the freestream velocity in wall units
+        cls.U_infty_plus = cls.U_infty / cls.u_tau
+
+        # Calculate specific heat capacity
+        cls.c_p = k * R / ( k - 1 )
+
+        # Calculate wall heat flux
+        if T_w == "adiabatic" or T_w == "a":
+            cls.q_w = 0
+        else:
+            k = cls.c_p * cls.mu_wall / Pr
+            cls.q_w = k * grad_yT
+
+        # Calculate the pressure gradient parameter
+        cls.alpha = cls.nu_wall * gradP / ( cls.tau_w * cls.u_tau )
+
+        # Calculate the heat flux parameter
+        cls.beta = cls.q_w * cls.nu_wall / ( cls.T_wall * k * cls.u_tau )
+
+        # Calculate the compressibility parameter
+        cls.gamma = ( Pr ** (1/3) ) * ( cls.u_tau **2 )/ ( 2 * cls.c_p * cls.T_wall )
+
+        #=============================================================
+        #
+        #   Calculate the profiles
+        #
+        #=============================================================
+
+        y_plus0 = np.exp( - kappa * C_plus )
+
+        #
+        #   Calculate the log mixing layer profile
+        #
+        if cls.alpha==0 and cls.beta==0:
+            
+            if velocity_profile.lower() in ["vd2", "van driest 2", "van driest"]:
+                a = np.sqrt( 1 - ( T_infty / cls.T_wall ) )
+                u_eq = cls.u_tau * ( (1/kappa) * np.log( cls.y_plus ) + C_plus )
+                cls.u_plus = ( cls.U_infty / a ) * np.sin( ( a / cls.U_infty ) * u_eq )
+                cls.u_plus_logmixing = cls.u_plus
+
+            elif velocity_profile.lower() in ["white", "white and christoph"]:
+                cls.u_plus = (1/np.sqrt(cls.gamma))*np.sin((np.sqrt(cls.gamma)/kappa)*np.log(cls.y_plus/y_plus0))
+                cls.u_plus_logmixing = (1/np.sqrt(cls.gamma))*np.sin((np.sqrt(cls.gamma)/kappa)*np.log(cls.y_plus/y_plus0))
+        
+        else:
+            Warning("Sorry, haven't implemented the general cases yet")
+
+        #
+        #   Calculate the viscous subregion
+        #
+        cls.u_plus_viscoussub = (cls.y_plus-y_plus0)
+        cls.u_plus[ cls.u_plus_viscoussub < cls.u_plus_logmixing ] = cls.u_plus_viscoussub[ cls.u_plus_viscoussub < cls.u_plus_logmixing ]
+
+        #
+        #   Smooth between the regions
+        #
+        cls.u_plus[mixing_length:-mixing_length] = np.convolve( cls.u_plus, np.ones( mixing_length ) / mixing_length, mode="same" )[mixing_length:-mixing_length]
+
+        #
+        #   Calculate the temperature profile
+        #
+        if T_w == "adiabatic" or T_w == "a":
+            TT_w = 1 - ( ( k - 1 ) / 2 ) * ( Ma_infty**2 ) * (T_infty/cls.T_wall) * ( ( cls.u_plus / cls.U_infty_plus )**2 )
+            cls.T = cls.T_wall * TT_w
+            cls.T = np.maximum( cls.T, T_infty * np.ones_like( cls.T ) )
+        else:
+            Warning("Sorry, haven't implemented the non-adiabatic wall temperature profile yet")
+
+        #
+        #   Calculate the density profile
+        #
+        cls.rho = cls.rho_wall * ( cls.T_wall / cls.T )
+
+        #
+        #   Calculate true velocity profile
+        #
+
+        # Cap the velocity at the freestream velocity
+        cls.u_plus = np.minimum( cls.u_plus, cls.U_infty_plus )
+        cls.u = cls.u_plus * cls.u_tau
+        cls.Ma = cls.u / np.sqrt( k * R * cls.T )
+
+
+        #=============================================================
+        #
+        #   Calculate the BL Limits
+        #
+        #=============================================================
+
+        
+
+        # Calculate the boundary layer thickness in wall units
+        cls.delta_plus = np.interp( BL_threshold, cls.u_plus/cls.U_infty_plus, cls.y_plus )
+
+        # Calculate the boundary layer thickness in physical units
+        cls.delta = cls.delta_plus * ( cls.nu_wall / cls.u_tau )
+
+        # Calculate the y/\delta
+        cls.y_delta = cls.y_plus / cls.delta_plus
+
+        # Calculate the actual velocity profile in physical units
+        
+
+        # Calculate the actual coordinates
+        cls.y = cls.y_plus * ( cls.nu_wall / cls.u_tau )
+
+        # Calculate displacement thickness
+        cls.delta_star = np.trapz( (1 - (cls.rho * cls.u)/( rho_infty * cls.U_infty))[cls.y<=cls.delta], cls.y[cls.y<=cls.delta] )
+
+        # Calculate momentum thickness
+        cls.theta = np.trapz( ((cls.rho * cls.u)/( rho_infty * cls.U_infty )*(1 - cls.u/cls.U_infty))[cls.y<=cls.delta], cls.y[cls.y<=cls.delta] )
 
 
 
-
-
+        
 
 
 
