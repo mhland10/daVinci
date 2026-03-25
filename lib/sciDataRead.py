@@ -266,7 +266,7 @@ class dataReader:
             raise ValueError( "Invalid accelerator engine selected" )
 
         # Read the OpenFOAM file
-        full_flnm = working_dir+"\\"+file_name
+        full_flnm = os.path.join( working_dir, file_name )
         if verbosity>0:
             print(f"The full filename is {full_flnm}")
         cls.foam = pasi.OpenFOAMReader( registrationName=file_name, FileName=full_flnm )
