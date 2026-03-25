@@ -305,6 +305,10 @@ class dataReader:
         for h in vector_headers:
             for c in coordinate_system:
                 cls.data[h+":"+c] = []
+            if h in ["vorticity"]:
+                for c in ['x', 'y', 'z']:
+                    if c not in coordinate_system:
+                        cls.data[h+":"+c] = []
 
         # Limit the time steps
         if cls.t_lims is None or all(v is None for v in cls.t_lims):
@@ -363,9 +367,13 @@ class dataReader:
                         array = internal_cells.GetCellData().GetArray(i)
                         data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
             for h in vector_headers:
-                for i in range( data_dict[h].shape[-1] ):
-                    if i<N_dims:
-                        data_dict[h+":"+coordinate_system[i]]=np.array([list(data_dict[h][:,i])]).T
+                if h not in ["vorticity"]:
+                    for i in range( data_dict[h].shape[-1] ):
+                        if i<N_dims:
+                            data_dict[h+":"+coordinate_system[i]]=np.array([list(data_dict[h][:,i])]).T
+                else:
+                    for i, coord in enumerate(["x","y","z"]):
+                        data_dict[h+":"+coord]=np.array([list(data_dict[h][:,i])]).T
                 data_dict.pop(h)
             cls.data_dict = data_dict
             if headers_drop:
@@ -416,7 +424,9 @@ class dataReader:
                     
                     object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( points_use[:,:N_dims], drop_dim, axis=1 ) )
                 else:
-                    object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( points_use[:,:N_dims] )
+                    #print(f"\n\n\nPoints use shape:\t{points_use.shape}")
+                    object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( points_use.T[:,:N_dims] )
+                    #print(f"Object data shape:\t{object_data.shape}")
             elif interpolator.lower() in ["l", "lin", "linear", "linearnd", "delaunay", "delaunaytriangulation"]:
                 if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ):
                     #print("Actually, it's 1D")
@@ -439,6 +449,8 @@ class dataReader:
                     cls.data[k] += [object_data[:,i]]
                 elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
                     cls.data[k] += [object_data[:,i].get()]
+
+        cls.time_steps = t_steps
 
         if not cls.time_dependent:
             for i, k in enumerate( list( cls.data.keys() ) ):
@@ -1766,6 +1778,60 @@ class sweep(dataReader):
                 cls.variance_data[k] = np.var( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
                 cls.skewness_data[k] = scst.skew( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
                 cls.kurtosis_data[k] = scst.kurtosis( cls.data[k][np.min(lims):np.max(lims)], axis=0 )
+
+    def frameTime(cls, velocity_keys=["U:x", "U:y", "U:z"] ):
+        """
+            This method calculates the time from the anchors for the sweeps.
+
+        Args:
+            velocity_keys (list, string):   The velocity keys that are to be used that define the
+                                            velocity in the absolute frame. Defaults to:
+                                            
+                                            ["U:x", "U:y", "U:z"]
+        
+        """
+
+        # Calculate the frame velocity
+        cls.U_frame = np.gradient( cls.anchors[:,0,:], cls.time_steps, axis=0 )
+
+        # Calculate the relative velocity
+        cls.U_relative = np.zeros( ( np.array(cls.data[velocity_keys[0]]).shape[1] ,) + cls.anchors[:,0,:].shape )
+        for t_i, t in enumerate( cls.time_steps ):
+            print(f"t_i:\t{t_i}")
+            print(f"t:\t{t:.3e}")
+
+            U_abs = []
+            for k_i, u_k in enumerate( velocity_keys ):
+                cls.dataset = cls.data[u_k][t_i]
+                U_abs += [cls.dataset]
+            U_abs = np.array(U_abs)
+
+            for i, U_a in enumerate( U_abs ):
+                cls.U_relative[:,t_i,i] = U_a - cls.U_frame[t_i][i]
+
+        # Calculate relative time
+        cls.i_0 = np.zeros_like( cls.anchors[:,0,:] ).astype(int)
+        cls.t_rel = np.zeros_like( cls.U_relative )
+        for k_i, k in enumerate( velocity_keys ):
+            print(f"k_i:\t{k_i}")
+            for t_i, t in enumerate( cls.time_steps ):
+                print(f"\tt_i:\t{t_i}")
+            
+                cls.i_0[t_i, k_i] = np.nanargmin( np.abs( cls.deltas[k_i] ) )
+
+                for d_i, d in enumerate( cls.deltas[k_i] ):
+                    print(f"\t\td_i:\t{d_i}")
+
+                    i_0 = cls.i_0[t_i, k_i]
+                    print(f"\t\t\tWhich has i_0:\t{i_0}")
+                    if d_i < i_0:
+                        x_domain = cls.deltas[k_i,d_i:i_0]
+                        cls.t_rel[d_i, t_i, k_i] = np.trapz( 1/cls.U_relative[d_i:i_0,t_i,k_i] , x=x_domain )
+                    elif d_i > i_0:
+                        x_domain = cls.deltas[k_i,i_0:d_i]
+                        cls.t_rel[d_i, t_i, k_i] = -np.trapz( 1/cls.U_relative[i_0:d_i,t_i,k_i] , x=x_domain )
+        cls.t_relative = np.sum( cls.t_rel, axis=-1 ).T
+
 
 class rake(dataReader):
     """
@@ -3168,8 +3234,10 @@ class fullCV(dataReader):
                     drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
                     print(f"Dropping dimension {drop_dim}")
                     object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ) )
+                    print("\n\n\nHello?")
                 else:
                     object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( cls.points[:,:N_dims] )
+                    print(f"\n\n\nObject data shape:\t{object_data.shape}")
             elif interpolator.lower() in ["l", "lin", "linear", "linearnd", "delaunay", "delaunaytriangulation"]:
                 if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ):
                     #print("Actually, it's 1D")
@@ -3189,6 +3257,7 @@ class fullCV(dataReader):
             # Re-arrange back into the keys
             for i, k in enumerate( list( data_dict.keys() ) ):
                 if not accelerator:
+                    print(f"\n\n\nObject Dat shape:\t{object_data.shape}")
                     cls.data[k] += [object_data[:,i]]
                 elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
                     cls.data[k] += [object_data[:,i].get()]
