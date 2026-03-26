@@ -131,6 +131,7 @@ class dataReader:
         # Expand wildcard pattern into actual file list with natural sorting
         self.datafile = datafile
         self.file_list = natsorted(glob.glob(datafile))  # Use natsorted instead of sorted
+        print(f"Working directory:\t{os.getcwd()}")
         print("File list:\t"+str(self.file_list))
 
         # Store the file format
@@ -425,7 +426,7 @@ class dataReader:
                     object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( points_use[:,:N_dims], drop_dim, axis=1 ) )
                 else:
                     #print(f"\n\n\nPoints use shape:\t{points_use.shape}")
-                    object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( points_use.T[:,:N_dims] )
+                    object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( points_use[:,:N_dims] )
                     #print(f"Object data shape:\t{object_data.shape}")
             elif interpolator.lower() in ["l", "lin", "linear", "linearnd", "delaunay", "delaunaytriangulation"]:
                 if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ):
@@ -446,6 +447,8 @@ class dataReader:
             # Re-arrange back into the keys
             for i, k in enumerate( list( data_dict.keys() ) ):
                 if not accelerator:
+                    if verbosity>1:
+                        print(f"Received Object Data {k} shape:\t{object_data[:,i].shape}")
                     cls.data[k] += [object_data[:,i]]
                 elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
                     cls.data[k] += [object_data[:,i].get()]
