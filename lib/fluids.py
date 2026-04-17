@@ -452,11 +452,11 @@ class turbulentShearMixingLayer:
             raise ValueError("Coordinate system contains a different number of axes than coordinates provided.")
 
 
-    def shearLayerProfile_measure(cls, data, streamwise_velocity_key="U:x", density_key="rho", spanwise_velocity_key="U:y", 
+    def shearLayerProfile_measure(cls, data, averaging_axis=0, streamwise_velocity_key="U:x", streamwise_coordinate=0, density_key="rho", spanwise_velocity_key="U:y", 
                                   tke_key="k", turb_modeling=True, turb_viscosity_key="nut", turb_dissipation_key="omega", 
                                   temperature_key="T", C_delta=0.0384, ke_coeff = { "C_mu":0.09 }, 
                                   ko_coeff = { "beta*": 0.009, "sigma_k":0.85 }, viscosity_func="sutherland", 
-                                  sutherland_coeffs={ "T_0":273.15, "S":110.4, "mu_0":17.16e-6 }, Temp=300 ):
+                                  sutherland_coeffs={ "T_0":273.15, "S":110.4, "mu_0":17.16e-6 }, Temp=300, tke_budget=True ):
         """
             This method allows the user to measure important data of the turbulent shear layer
 
@@ -487,16 +487,16 @@ class turbulentShearMixingLayer:
         #=============================================================
 
         cls.favre_data = {}
-        cls.favre_data["u"], cls.favre_data["rho"] = favre_average( cls.data[density_key], cls.data[streamwise_velocity_key], return_rho_avg=True )
-        cls.favre_data["v"] = favre_average( cls.data[density_key], cls.data[spanwise_velocity_key] )
+        cls.favre_data["u"], cls.favre_data["rho"] = favre_average( cls.data[density_key], cls.data[streamwise_velocity_key], return_rho_avg=True, time_axis=averaging_axis )
+        cls.favre_data["v"] = favre_average( cls.data[density_key], cls.data[spanwise_velocity_key], time_axis=averaging_axis )
         if not temperature_key==None:
-            cls.favre_data["T"] = favre_average( cls.data[density_key], cls.data[temperature_key] )
+            cls.favre_data["T"] = favre_average( cls.data[density_key], cls.data[temperature_key], time_axis=averaging_axis )
         else:
             cls.favre_data["T"] = Temp
         if turb_modeling:
-            cls.favre_data["k"] = favre_average( cls.data[density_key], cls.data[tke_key] )
-            cls.favre_data["omega"] = favre_average( cls.data[density_key], cls.data[tke_key] )
-            cls.favre_data["nut"] = favre_average( cls.data[density_key], cls.data[turb_viscosity_key] )
+            cls.favre_data["k"] = favre_average( cls.data[density_key], cls.data[tke_key], time_axis=averaging_axis )
+            cls.favre_data["omega"] = favre_average( cls.data[density_key], cls.data[tke_key], time_axis=averaging_axis )
+            cls.favre_data["nut"] = favre_average( cls.data[density_key], cls.data[turb_viscosity_key], time_axis=averaging_axis )
 
         #=============================================================
         #
@@ -505,19 +505,47 @@ class turbulentShearMixingLayer:
         #=============================================================
 
         # Calculate convective velocity
-        cls.U_c = np.trapz( cls.favre_data["rho"] * cls.favre_data["u"], cls.coords[cls.spanwise_coord] ) / np.trapz( cls.favre_data["rho"] , cls.coords[cls.spanwise_coord] ) 
+        if averaging_axis==0:
+            cls.U_c = np.trapz( cls.favre_data["rho"] * cls.favre_data["u"], cls.coords[cls.spanwise_coord] ) / np.trapz( cls.favre_data["rho"] , cls.coords[cls.spanwise_coord] ) 
+        else:
+            cls.U_c = []
+            for i in range( cls.data[streamwise_velocity_key].shape[0] ):
+                cls.dy = np.mean( np.gradient( cls.coords[cls.spanwise_coord], axis=cls.spanwise_coord ), axis=streamwise_coordinate )
+                cls.int_rhoU = np.trapz( (cls.favre_data["rho"] * cls.favre_data["u"])[i], dx=cls.dy[:-1], axis=cls.spanwise_coord-1 )
+                cls.int_rho = np.trapz( cls.favre_data["rho"][i] , dx=cls.dy[:-1], axis=cls.spanwise_coord-1 )
+                cls.U_c += [ cls.int_rhoU / np.minimum( cls.int_rho, 1e-12*np.ones_like(cls.int_rho) ) ]
+            cls.U_c = np.array( cls.U_c )
+            cls.U_c = np.nan_to_num( cls.U_c, nan=0.0, posinf=0.0, neginf=0.0 )
 
         # Calculate the momentum thickness
         u_tildes = cls.favre_data["u"]
         rho_avg = cls.favre_data["rho"]
-        DU = np.abs( u_tildes[-1] - u_tildes[0] )
-        U_c = ( cls.favre_data["u"][-1] + cls.favre_data["u"][0] ) / 2
-        #integral_val = np.trapz( rho_avg * ( cls.U_c - u_tildes ) * ( cls.U_c + u_tildes ), cls.coords[cls.spanwise_coord] )
-        integral_val = np.trapz( rho_avg * ( cls.favre_data["u"][-1] - cls.favre_data["u"] ) * ( cls.favre_data["u"] - cls.favre_data["u"][0] ), cls.coords[cls.spanwise_coord] )
-        cls.delta_theta = integral_val / ( np.mean( rho_avg ) * ( DU ** 2 ) )
+        if averaging_axis==0 and len(cls.favre_data["u"].shape)==1:
+            DU = np.abs( u_tildes[-1] - u_tildes[0] )
+            U_c = ( cls.favre_data["u"][-1] + cls.favre_data["u"][0] ) / 2
+            integral_val = np.trapz( rho_avg * ( cls.favre_data["u"][-1] - cls.favre_data["u"] ) * ( cls.favre_data["u"] - cls.favre_data["u"][0] ), cls.coords[cls.spanwise_coord] )
+            cls.delta_theta = integral_val / ( np.mean( rho_avg ) * ( DU ** 2 ) )
+        elif len(cls.favre_data["u"].shape)>1 and not averaging_axis==0 :
+            cls.delta_theta = []
+            for i in range( cls.favre_data["u"].shape[0] ):
+                DU = np.abs( u_tildes[i][-1] - u_tildes[i][0] )
+                cls.DU = DU
+                U_c = cls.U_c[i]
+                integral_val = np.trapz( rho_avg[i] * ( cls.favre_data["u"][i][-1] - cls.favre_data["u"][i] ) * ( cls.favre_data["u"][i] - cls.favre_data["u"][i][0] ), np.mean( cls.coords[cls.spanwise_coord], axis=streamwise_coordinate ), axis=cls.spanwise_coord-1 )
+                cls.delta_theta += [integral_val / ( np.mean( rho_avg[i] ) * ( DU ** 2 ) )]
+            cls.delta_theta = np.array( cls.delta_theta )
 
         # Calculate the vorticity thickness
-        cls.delta_omega = ( DU + U_c ) / np.max( np.gradient( u_tildes, cls.coords[cls.spanwise_coord] ) )
+        if averaging_axis==0 and len(cls.favre_data["u"].shape)==1:
+            cls.delta_omega = ( DU + U_c ) / np.max( np.gradient( u_tildes, cls.coords[cls.spanwise_coord] ) )
+        elif len(cls.favre_data["u"].shape)>1 and not averaging_axis==0 :
+            cls.delta_omega = []
+            for i in range( cls.favre_data["u"].shape[0] ):
+                cls.DU = np.abs( cls.favre_data["u"][i][-1] - cls.favre_data["u"][i][0] )
+                print(f"Averaging axis:\t{averaging_axis}")
+                cls.shear_coords = np.mean( np.mean( cls.coords[cls.spanwise_coord], axis=averaging_axis-1 ), axis=-1 )
+                cls.max_shear = np.max( np.gradient( u_tildes[i], cls.shear_coords, axis=0 ) )
+                cls.delta_omega += [ ( cls.DU + cls.U_c[i] ) /  cls.max_shear ]
 
         # Calculate empirical incompressilbe growth rate
         cls.delta_theta_dot_incompressible = C_delta * ( 1 - u_tildes[0]/u_tildes[-1] ) * ( 1 + np.sqrt( rho_avg[0] / rho_avg[-1] ) ) / ( 2 * ( 1 + (u_tildes[0]/u_tildes[-1]) * np.sqrt( rho_avg[0] / rho_avg[-1] ) ) )
@@ -528,25 +556,41 @@ class turbulentShearMixingLayer:
         #
         #=============================================================
 
-        cls.tke_budget = {}
+        if tke_budget:
 
-        # Calculate the production
-        du_dy = np.gradient( cls.favre_data["u"], cls.coords[cls.spanwise_coord] )
-        dv_dy = np.gradient( cls.favre_data["v"], cls.coords[cls.spanwise_coord] )
-        if turb_modeling:
-            cls.tke_budget["Production"] = 2 * cls.favre_data["nut"] * cls.favre_data["rho"] * ( 0.5 * ( du_dy ** 2 ) + ( dv_dy ** 2 ) )
-            cls.tke_budget["Production"] -=  (2/3) * cls.favre_data["k"] * dv_dy
+            cls.tke_budget = {}
 
-        # Calculate the dissipation
-        if turb_modeling:
-            #cls.tke_budget["Dissipation"] = -ko_coeff["beta*"] * cls.favre_data["rho"] * cls.favre_data["k"] * cls.favre_data["omega"]
-            cls.tke_budget["Dissipation"] = -cls.favre_data["rho"] * ke_coeff["C_mu"] * ( cls.favre_data["k"]**2 ) / cls.favre_data["nut"]
+            # Calculate the production
+            du_dy = np.gradient( cls.favre_data["u"], cls.coords[cls.spanwise_coord] )
+            dv_dy = np.gradient( cls.favre_data["v"], cls.coords[cls.spanwise_coord] )
+            if turb_modeling:
+                cls.tke_budget["Production"] = 2 * cls.favre_data["nut"] * cls.favre_data["rho"] * ( 0.5 * ( du_dy ** 2 ) + ( dv_dy ** 2 ) )
+                cls.tke_budget["Production"] -=  (2/3) * cls.favre_data["k"] * dv_dy
 
-        # Calculate the transport
-        if viscosity_func.lower() in ["sutherland's law", "sutherlands law", "sutherland", "s"]:
-            mu = sutherland_viscosity( cls.favre_data["T"], coefficients=sutherland_coeffs )
-        if turb_modeling:
-            cls.tke_budget["Transport"] = np.gradient( ( mu + ko_coeff["sigma_k"] * cls.favre_data["nut"] * cls.favre_data["rho"] ) * np.gradient( cls.favre_data["k"], cls.coords[cls.spanwise_coord] ), cls.coords[cls.spanwise_coord] )
+            # Calculate the dissipation
+            if turb_modeling:
+                #cls.tke_budget["Dissipation"] = -ko_coeff["beta*"] * cls.favre_data["rho"] * cls.favre_data["k"] * cls.favre_data["omega"]
+                cls.tke_budget["Dissipation"] = -cls.favre_data["rho"] * ke_coeff["C_mu"] * ( cls.favre_data["k"]**2 ) / cls.favre_data["nut"]
+
+            # Calculate the transport
+            if viscosity_func.lower() in ["sutherland's law", "sutherlands law", "sutherland", "s"]:
+                mu = sutherland_viscosity( cls.favre_data["T"], coefficients=sutherland_coeffs )
+            if turb_modeling:
+                cls.tke_budget["Transport"] = np.gradient( ( mu + ko_coeff["sigma_k"] * cls.favre_data["nut"] * cls.favre_data["rho"] ) * np.gradient( cls.favre_data["k"], cls.coords[cls.spanwise_coord] ), cls.coords[cls.spanwise_coord] )
+
+    def resolvedTurbulence( cls, sgs_k_key="k" ):
+        """
+            This method performs the operations needed to understand the shear layer if the flow is
+        resolved or partially resolved. This includes reconciling subgrid scale turbulence with the 
+        resolved turbulence.
+
+        Args:
+            sgs_k_key (str, optional):  The key for the subgrid scale turbulent kinetic energy. 
+                                        Defaults to "k".
+
+        """
+
+        
 
 
     def initial_conditions(cls, stream_velocity_difference, mixingLayer_width, stream_temperatures, stream_Rs ):
