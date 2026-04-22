@@ -979,13 +979,16 @@ class turbulentShearMixingLayer:
 
         # Get the source points
         cls.sourcePoints = []
+        cls.sourceIndices = []
         for i in range( len( cls.domain[0] ) ):
             for j in range( len( cls.domain[1] ) ):
                 if len(cls.domain)>2:
                     for k in range( len( cls.domain[2] ) ):
                         cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j], cls.domain[2][k] ] ]
+                        cls.sourceIndices += [ [ i, j, k ] ]
                 else:
-                    cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j], 0.0 ] ]
+                    cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j] ] ]
+                    cls.sourceIndices += [ [ i, j ] ]
         cls.sourcePoints = np.array( cls.sourcePoints )
 
 
