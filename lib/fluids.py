@@ -1002,7 +1002,11 @@ class turbulentShearMixingLayer:
                 cls.sourceVelocities[i] = cls.u_resolved[0][0, cls.sourceIndices[i,1]]
 
         # Get target velocities
-        cls.targetVelocities = sint.RBFInterpolator( cls.sourcePoints, cls.sourceVelocities, neighbors=src_pts )( cls.cellCenters )
+        interpolator = sint.RBFInterpolator( cls.sourcePoints, cls.sourceVelocities, neighbors=src_pts )
+        if len(cls.domain)>2:
+            cls.targetVelocities = interpolator( cls.cellCenters )
+        else:
+            cls.targetVelocities = interpolator( cls.cellCenters[:,:2] )
 
         # Write the velocity field
         cls.initial_time["U"].internal_field = cls.targetVelocities
