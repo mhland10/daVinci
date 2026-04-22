@@ -1006,8 +1006,13 @@ class turbulentShearMixingLayer:
                 cls.sourceVelocities[j,i] = cls.u_resolved[i][ tuple( cls.sourceIndices[j] ) ]
         print(f"Source velocities shape:\t{cls.sourceVelocities.shape}")
 
+        print("cellCenters finite:", np.isfinite(cls.cellCenters).all())
+        print("sourcePoints finite:", np.isfinite(cls.sourcePoints).all())
+        print("sourceVelocities finite:", np.isfinite(cls.sourceVelocities).all())
+
         # Get target velocities
         interpolator = sint.RBFInterpolator( cls.sourcePoints, cls.sourceVelocities, neighbors=src_pts )
+        print("Interpolator initialized.")
         if len(cls.domain)>2:
             cls.targetVelocities = interpolator( cls.cellCenters )
         else:
