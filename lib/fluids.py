@@ -977,6 +977,7 @@ class turbulentShearMixingLayer:
 
         # Pull the cell centers
         cls.cellCenters = cls.initial_time.cell_centers().internal_field
+        print(f"Cell centers shape:\t{cls.cellCenters.shape}")
 
         # Get the source points
         cls.sourcePoints = []
@@ -991,15 +992,15 @@ class turbulentShearMixingLayer:
                     cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j] ] ]
                     cls.sourceIndices += [ [ i, j ] ]
         cls.sourcePoints = np.array( cls.sourcePoints )
-        cls.sourceIndices = np.array( cls.sourceIndices )
+        cls.sourceIndices = np.array( cls.sourceIndices ).astype(int)
+        print(f"Source points shape:\t{cls.sourcePoints.shape}")
 
         # Generate source velocities
-        cls.sourceVelocities = np.zeros_like( cls.sourcePoints )
-        for i in range( cls.sourcePoints.shape[0] ):
-            if len(cls.domain)>2:
-                cls.sourceVelocities[i] = cls.u_resolved[0][0, cls.sourceIndices[i,1], cls.sourceIndices[i,2]]
-            else:
-                cls.sourceVelocities[i] = cls.u_resolved[0][0, cls.sourceIndices[i,1]]
+        cls.sourceVelocities = np.zeros( cls.sourcePoints.shape )
+        for i in range( len(cls.domain) ):
+            for j in range( cls.sourcePoints.shape[0] ):
+                cls.sourceVelocities[i,j] = cls.u_resolved[i][ tuple( cls.sourceIndices[j] ) ]
+        print(f"Source velocities shape:\t{cls.sourceVelocities.shape}")
 
         # Get target velocities
         interpolator = sint.RBFInterpolator( cls.sourcePoints, cls.sourceVelocities, neighbors=src_pts )
