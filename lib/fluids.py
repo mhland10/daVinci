@@ -991,12 +991,12 @@ class turbulentShearMixingLayer:
                 else:
                     cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j] ] ]
                     cls.sourceIndices += [ [ i, j ] ]
-        cls.sourcePoints = np.array( cls.sourcePoints )
+        cls.sourcePoints = np.array( cls.sourcePoints ).astype(np.float32)
         cls.sourceIndices = np.array( cls.sourceIndices ).astype(int)
         print(f"Source points shape:\t{cls.sourcePoints.shape}")
 
         # Generate source velocities
-        cls.sourceVelocities = np.zeros( cls.sourcePoints.shape )
+        cls.sourceVelocities = np.zeros( cls.sourcePoints.shape ).astype(np.float32)
         for i in range( len(cls.domain) ):
             for j in range( cls.sourcePoints.shape[0] ):
                 cls.sourceVelocities[j,i] = cls.u_resolved[j][ tuple( cls.sourceIndices[i] ) ]
