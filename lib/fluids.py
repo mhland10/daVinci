@@ -999,7 +999,7 @@ class turbulentShearMixingLayer:
         cls.sourceVelocities = np.zeros( cls.sourcePoints.shape )
         for i in range( len(cls.domain) ):
             for j in range( cls.sourcePoints.shape[0] ):
-                cls.sourceVelocities[j,i] = cls.u_resolved[i][ tuple( cls.sourceIndices[j] ) ]
+                cls.sourceVelocities[j,i] = cls.u_resolved[j][ tuple( cls.sourceIndices[i] ) ]
         print(f"Source velocities shape:\t{cls.sourceVelocities.shape}")
 
         # Get target velocities
