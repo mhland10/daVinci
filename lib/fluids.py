@@ -972,6 +972,21 @@ class turbulentShearMixingLayer:
 
         # Initialize the case
         cls.case = FoamCase( case_dir )
+        cls.initial_time = cls.case[0]
+
+        # Pull the cell centers
+        cls.cellCenters = cls.initial_time.cell_centers().internal_field
+
+        # Get the source points
+        cls.sourcePoints = []
+        for i in range( len( cls.domain[0] ) ):
+            for j in range( len( cls.domain[1] ) ):
+                if len(cls.domain)>2:
+                    for k in range( len( cls.domain[2] ) ):
+                        cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j], cls.domain[2][k] ] ]
+                else:
+                    cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j], 0.0 ] ]
+        cls.sourcePoints = np.array( cls.sourcePoints )
 
 
 class boundaryLayer:
