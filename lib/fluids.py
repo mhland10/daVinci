@@ -954,7 +954,7 @@ class turbulentShearMixingLayer:
             cls.u_resolved += [ cls.u[i][None, :, None] + cls.u_prime_components[i] ]
 
 
-    def write_resolvedInitialization(cls, case_dir ):
+    def write_resolvedInitialization(cls, case_dir, src_pts=50 ):
         """
             This method takes the resolved shear layer field and writes it to an OpenFOAM case 
         directory.
@@ -969,6 +969,7 @@ class turbulentShearMixingLayer:
         #   Import software to write OpenFOAM files
         #
         from foamlib import FoamCase
+        import scipy.interpolate as sint
 
         # Initialize the case
         cls.case = FoamCase( case_dir )
@@ -990,6 +991,21 @@ class turbulentShearMixingLayer:
                     cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j] ] ]
                     cls.sourceIndices += [ [ i, j ] ]
         cls.sourcePoints = np.array( cls.sourcePoints )
+        cls.sourceIndices = np.array( cls.sourceIndices )
+
+        # Generate source velocities
+        cls.sourceVelocities = np.zeros_like( cls.sourcePoints )
+        for i in range( cls.sourcePoints.shape[0] ):
+            if len(cls.domain)>2:
+                cls.sourceVelocities[i] = cls.u_resolved[0][0, cls.sourceIndices[i,1], cls.sourceIndices[i,2]]
+            else:
+                cls.sourceVelocities[i] = cls.u_resolved[0][0, cls.sourceIndices[i,1]]
+
+        # Get target velocities
+        cls.targetVelocities = sint.RBFInterpolator( cls.sourcePoints, cls.sourceVelocities, neighbors=src_pts )( cls.cellCenters )
+
+        # Write the velocity field
+        cls.initial_time["U"].internal_field = cls.targetVelocities
 
 
 class boundaryLayer:
