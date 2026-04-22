@@ -590,6 +590,8 @@ class turbulentShearMixingLayer:
 
         """
 
+        print("hello there, this is still under consruction")
+
         
 
 
@@ -798,6 +800,7 @@ class turbulentShearMixingLayer:
 
             # Rescale R_xx
             R_xx_rescale = np.array( R_xx_NormalizedPeak ) - np.array( R_xx_Baseline )
+            cls.R_xx = R_xx_NormalizedPeak
             
             # Add peak to TKE
             cls.TKE += cls.PDF * ( np.linalg.norm( R_xx_rescale ) * cls.u[cls.streamwise] ) ** 2
@@ -881,7 +884,95 @@ class turbulentShearMixingLayer:
 
                     cls.nu_tilde = solved.x
 
-                        
+    def initialize_resolvedLayer(cls, largest_wavenumber=None, N_wavenumbers=48, b=2.0, interval_factor=1.15, averaging_dimension=0  ):
+        """
+            This method takes the turbulence profile and then produces a resolved profile data to 
+        create an initialization from.
+
+        Args:
+            largest_wavenumber (float, optional):   This is the largest wavenumber to initialize 
+                                                    the TKE energy profile from. Defaults to None,
+                                                    which take the wavenumber as half the initial
+                                                    momentum thickness.
+
+            N_wavenumbers (int, optional):  This is the number of wavenumbers that will be sampled
+                                            to form the resolved energy.
+
+            b (float, optional):    The exponential factor to form the profile of turbulent kinetic
+                                    energy spectra.
+
+            interval_factor (float, optional):  The multiplication factor in the log space to form 
+                                                the span of wavenumbers
+        """        
+
+        # Create global TKE distribution by wavenumber
+        if not largest_wavenumber:
+            largest_wavenumber = 2/cls.delta_theta0
+        cls.turb_wavenumbers = np.logspace( np.log10( largest_wavenumber ), np.log10( largest_wavenumber * ( interval_factor ** (N_wavenumbers ) ) ), num=N_wavenumbers )
+        cls.E_profile = ( ( cls.turb_wavenumbers / cls.turb_wavenumbers[0] )**2 ) * np.exp( -b* ( ( cls.turb_wavenumbers / cls.turb_wavenumbers[0] ) ** 2 ) )
+        cls.E_profile = cls.E_profile / np.sum(cls.E_profile)
+
+        # Separate the TKE energy profile by component
+        cls.E_profile_components = []
+        for i in range( len( cls.domain ) ):
+            cls.E_profile_components += [ cls.E_profile * ( ( cls.R_xx[i] / np.linalg.norm( cls.R_xx ) )**2 ) ]
+
+        # Provide the frequency response for each wave number
+        cls.k = np.zeros( ( len(cls.TKE), N_wavenumbers ) )
+        cls.k_components = np.zeros( ( len(cls.domain), len(cls.TKE), N_wavenumbers ) )
+        for i in range( N_wavenumbers ):
+            cls.k[:,i] = cls.E_profile[i] * cls.TKE
+            for j in range( len( cls.domain ) ):
+                cls.k_components[j,:,i] = cls.E_profile_components[j][i] * cls.TKE
+
+        # Define the phases
+        phase_shape = (len(cls.domain),) + tuple([len(d) for d in cls.domain])
+        print(f"Phase shape:\t{phase_shape}")
+        cls.phases = 2 * np.pi * np.random.random( phase_shape ).astype( np.float32 ) - np.pi
+
+        # Define the fluctuating velocity components in the Fourier space
+        cls.u_hat_components = np.zeros_like( cls.phases ).astype( np.complex64 )
+        cls.u_hat_components = np.swapaxes( cls.u_hat_components, -1, averaging_dimension+1 )
+        for i in range( len(cls.domain) ):
+            cls.u_hat_components[i][...,:N_wavenumbers] = np.sqrt( 2 * cls.k_components[i] ) * cls.DeltaU
+        cls.u_hat_components = np.swapaxes( cls.u_hat_components, -1, averaging_dimension+1 ) * np.exp( 1j * cls.phases )
+        cls.u_prime_components = np.fft.ifft( cls.u_hat_components, axis=averaging_dimension+1 ).real
+
+        # Make zero mean
+        cls.u_prime_means = []
+        for i in range( len(cls.domain) ):
+            if cls.u_prime_components[i].ndim>2:
+                axes = tuple(ax for ax in range(cls.u_prime_components[i].ndim-1) if ax != averaging_dimension+1)
+            else:
+                axes = tuple(ax for ax in range(cls.u_prime_components[i].ndim) if ax != averaging_dimension+1)
+            cls.u_prime_means += [np.mean(cls.u_prime_components[i], axis=axes, keepdims=True)]
+            cls.u_prime_components[i] = cls.u_prime_components[i] - cls.u_prime_means[i]
+
+        # Create the resolved velocity field
+        cls.u_resolved = []
+        for i in range( len(cls.domain) ):
+            cls.u_resolved += [ cls.u[i][None, :, None] + cls.u_prime_components[i] ]
+
+
+    def write_resolvedInitialization(cls, case_dir ):
+        """
+            This method takes the resolved shear layer field and writes it to an OpenFOAM case 
+        directory.
+
+        Args:
+            case_dir (string): The directory where the OpenFOAM case is located.
+
+        
+        """
+
+        #
+        #   Import software to write OpenFOAM files
+        #
+        from foamlib import FoamCase
+
+        # Initialize the case
+        cls.case = FoamCase( case_dir )
+
 
 class boundaryLayer:
     """

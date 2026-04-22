@@ -475,6 +475,328 @@ class dataReader:
                     cls.data[k] = np.array( cls.data[k] )
                 except:
                     raise Warning( "The data is not truly time dependent" )
+
+    def foamCaseRead_foamNative( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
+                     coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, 
+                     headers_read=None, headers_drop=[], N_sourcePts=1000, allow_dim_drop=True, 
+                     engine="paraview", store_caseData_2disk=False, store_data_2disk=False ):
+        """
+            This reader reads an OpenFOAM case using Paraview - Legacy, but slow
+
+        Args:
+            working_dir (string):   The directory of the case.
+
+            file_name (string, optional):   The name of the file to read the OpenFOAM data.
+                                                Defaults to "foam.foam"
+
+            verbosity (int, optional):  The verbosity of the reader. 0 is no output, 1 is some 
+                                        output, and 2 is all the output.
+
+            vector_headers (list, optional):    The list of headers that are vectors that need to 
+                                                be split into their respective components. Defaults
+                                                to ["U"].
+
+            coordinate_system (list, optional):    The coordinate system that will be used. Applies
+                                                    to the vector headers and the interpolation. 
+                                                    Defaults to ['x', 'y', 'z'].
+
+            interpolator (string, optional):    The interpolator that will be used. The valid 
+                                                options are:
+
+                                                - *"rbf", "rbfinterpolator", 
+                                                    "radial basis function", "radialbasisfunction":
+
+                                                    For the radial basis function interpolator.
+
+                                                - "l", "lin", "linear", "linearnd", "delaunay", 
+                                                    "delaunaytriangulation":
+
+                                                    For the linear interpolator. Uses Delaunay
+                                                    triangulation on the back end.
+
+                                                Not cases sensitive.
+
+            accelerator (string, optional):    The accelerator that will be used. The valid options
+                                                are:
+
+                                                - *None:   No accelerator will be used.
+
+                                                - "cuda", "cu", "c", "cupy":   The CUDA accelerator
+                                                    will be used via CuPy.
+
+                                                Not case sensitive.          
+
+            headers_read (list, optional):    The list of headers that will be read from the 
+                                                OpenFOAM case. If None, then it will just read all
+                                                the headers. Defaults to None.                
+
+            headers_drop (list, optional):    The list of headers that will be dropped from the
+                                                OpenFOAM case. If None, then it will not drop any
+                                                headers. Defaults to [].
+
+            N_sourcePts (int, optional):    The number of source points that will be used in the
+                                            interpolation. Decreasing this noumber allows larger 
+                                            cases and outputs to be read, but at the cost of 
+                                            accuracy. Defaults to 1000. Feeds into SciPy's 
+                                            RBFInterpolator as the "neighbors" argument.
+
+            allow_dim_drop (boolean, optional):     Whether the reader will allow a dimension to be
+                                                    dropped.
+
+            engine (string, optional):    The engine that will be used to read the data. The valid
+                                            options are:
+
+                                            - *"paraview":   The Paraview engine will be used to 
+                                                            read the data. This is the default, 
+                                                            and the only currently implemented 
+                                                            option.
+
+            store_caseData_2disk (boolean, optional):   Whether the reader will store the raw case 
+                                                        data to the disk at every time step via 
+                                                        NumPy's memmap function. This is useful for
+                                                        very large datasets so that this method is
+                                                        not limited by RAM. Defaults to False. Note
+                                                        that this does limit the CuPy functionality
+                                                        but this is to be expected since the data is
+                                                        stored on the disk and not in GPU memory.
+
+            store_data_2disk (boolean, optional):   Whether the reader will store the object's data
+                                                    to the disk at every time step via NumPy's 
+                                                    memmap function. This is useful for very large 
+                                                    datasets so that this method is not limited by 
+                                                    RAM. Defaults to False. Note that this does 
+                                                    limit the CuPy functionality but this is to be 
+                                                    expected since the data is stored on the disk 
+                                                    and not in GPU memory.
+
+        """
+        # Move to the working directory
+        os.chdir( working_dir )
+
+        # Find the number of dimension from the coordinate system
+        N_dims = len( coordinate_system )
+        if verbosity>0:
+            print(f"Number of dimensions: {N_dims}")
+            print(f"Coordinate system: {coordinate_system}")
+
+        #
+        # Import modules
+        #
+        import paraview.simple as pasi
+        import paraview.servermanager as pase
+        import time
+        if not accelerator:
+            import scipy.interpolate as sint
+        elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
+            import cupyx.scipy.interpolate as sint
+        else:
+            raise ValueError( "Invalid accelerator engine selected" )
+
+        # Read the OpenFOAM file
+        full_flnm = os.path.join( working_dir, file_name )
+        if verbosity>0:
+            print(f"The full filename is {full_flnm}")
+        cls.foam = pasi.OpenFOAMReader( registrationName=file_name, FileName=full_flnm )
+        cls.foam.MeshRegions = ["internalMesh"]
+        cls.foam.UpdatePipeline()
+
+        # Check if cells exist now
+        if verbosity>0:
+            print("Number of cells:", cls.foam.GetDataInformation().GetNumberOfCells())
+        
+        # Pull the time steps available
+        cls.time_steps = np.array( cls.foam.TimestepValues )
+
+        # Get cell centers
+        cls.cell_centers = pasi.CellCenters(Input=cls.foam)
+        cls.cell_centers.UpdatePipeline()
+
+        # Fetch data into a numpy-compatible format
+        cell_data = pase.Fetch(cls.foam)
+        centers_data = pase.Fetch(cls.cell_centers)
+        if verbosity>0:
+            print(f"Number of blocks in cell centers: {centers_data.GetNumberOfBlocks()}")
+            print(f"Number of blocks in cell data: {cell_data.GetNumberOfBlocks()}")
+
+        # Extract the internal mesh block
+        internal_centers = centers_data.GetBlock(0)
+        internal_cells = cell_data.GetBlock(0)
+        if internal_centers is None or internal_cells is None:
+            raise ValueError("No valid internal mesh block found in the OpenFOAM case.")
+        
+        # Initialize storage for extracted data
+        cls.data = {internal_cells.GetCellData().GetArrayName(i): [] for i in range( internal_cells.GetCellData().GetNumberOfArrays() ) if internal_cells.GetCellData().GetArrayName(i) not in vector_headers }
+        for k in headers_drop:
+            if k in list( cls.data.keys() ):
+                cls.data.pop(k)
+        for h in vector_headers:
+            for c in coordinate_system:
+                cls.data[h+":"+c] = []
+            if h in ["vorticity"]:
+                for c in ['x', 'y', 'z']:
+                    if c not in coordinate_system:
+                        cls.data[h+":"+c] = []
+
+        # Limit the time steps
+        if cls.t_lims is None or all(v is None for v in cls.t_lims):
+            t_steps = np.array(cls.time_steps)
+        else:
+            # Filter out Nones and get valid bounds
+            valid_lims = [v for v in cls.t_lims if v is not None]
+            t_min, t_max = np.min(valid_lims), np.max(valid_lims)
+            t_steps = cls.time_steps[ (cls.time_steps >= t_min) & (cls.time_steps <= t_max)]
+
+            
+        #print(f"Original time steps:\t{cls.time_steps}")
+        #print(f"Filtered time steps:\t{t_steps}")
+
+        for j, t in enumerate( t_steps ):
+            print(f"Current time step {t} at index {j}...")
+
+            start_paraview = time.perf_counter()
+
+            # Move the Paraview reader along
+            cls.foam.UpdatePipeline(t)
+
+            # Get cell centers
+            cls.cell_centers = pasi.CellCenters(Input=cls.foam)
+            cls.cell_centers.UpdatePipeline()
+
+            # Fetch data into a numpy-compatible format
+            cell_data = pase.Fetch(cls.foam)
+            centers_data = pase.Fetch(cls.cell_centers)
+            if verbosity>1:
+                print(f"Number of blocks in cell centers: {centers_data.GetNumberOfBlocks()}")
+                print(f"Number of blocks in cell data: {cell_data.GetNumberOfBlocks()}")
+
+            # Extract the internal mesh block
+            internal_centers = centers_data.GetBlock(0)
+            internal_cells = cell_data.GetBlock(0)
+            if internal_centers is None or internal_cells is None:
+                raise ValueError("No valid internal mesh block found in the OpenFOAM case.")
+
+            # Extract cell center coordinates
+            num_cells = internal_centers.GetNumberOfPoints()
+            cell_coords = np.array([internal_centers.GetPoint(i) for i in range(num_cells)])
+            cls.cell_coords = cell_coords
+
+            # Extract field data
+            num_arrays = internal_cells.GetCellData().GetNumberOfArrays()
+            data_dict = {}
+            for i in range(num_arrays):
+                name = internal_cells.GetCellData().GetArrayName(i)
+                if not headers_read:
+                    array = internal_cells.GetCellData().GetArray(i)
+                    data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
+                else:
+                    if name in vector_headers:
+                        array = internal_cells.GetCellData().GetArray(i)
+                        data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
+                    if name in headers_read:
+                        array = internal_cells.GetCellData().GetArray(i)
+                        data_dict[name] = np.array([array.GetTuple(i) for i in range(num_cells)])
+            for h in vector_headers:
+                if h not in ["vorticity"]:
+                    for i in range( data_dict[h].shape[-1] ):
+                        if i<N_dims:
+                            data_dict[h+":"+coordinate_system[i]]=np.array([list(data_dict[h][:,i])]).T
+                else:
+                    for i, coord in enumerate(["x","y","z"]):
+                        data_dict[h+":"+coord]=np.array([list(data_dict[h][:,i])]).T
+                data_dict.pop(h)
+            cls.data_dict = data_dict
+            if headers_drop:
+                for k in headers_drop:
+                    if k in list( data_dict.keys() ):
+                        data_dict.pop(k)
+            if verbosity>1:
+                for k in list( data_dict.keys() ):
+                    print( f"Key {k} has shape {data_dict[k].shape}" )
+            if store_caseData_2disk:
+                data_matrix = np.memmap( f"caseData_t{t}.dat", dtype='float64', mode='w+', shape=np.array([ data_dict[k][...,0] for k in list( data_dict.keys() ) ]).shape )
+            data_matrix = np.array([ data_dict[k][...,0] for k in list( data_dict.keys() ) ])
+            cls.data_matrix = data_matrix
+
+            # If time dependent, set the points to be this time step
+            if cls.time_dependent:
+                if store_caseData_2disk:
+                    points_use = np.memmap( f"points_t{t}.dat", dtype='float64', mode='w+', shape=cls.points[j,...].shape )
+                points_use = cls.points[j,...]
+            else:
+                if store_caseData_2disk:
+                    points_use = np.memmap( f"points.dat", dtype='float64', mode='w+', shape=cls.points.shape )
+                points_use = cls.points
+
+            end_paraview = time.perf_counter()
+
+            # Print summary
+            if verbosity>1:
+                # Combine coordinates and field data
+                full_data = {"coordinates": cell_coords}
+                full_data.update(data_dict)
+
+                print(f"Extracted {len(cell_coords)} cell centers.")
+                print("Available fields:", list(full_data.keys()))
+                print("First 5 cell centers:\n", cell_coords[:5])
+                if "U" in full_data:
+                    print("First 5 velocity vectors:\n", full_data["U"][:5])
+
+            # Set up the object data
+            if store_data_2disk:
+                object_data = np.memmap( f"objectData_t{t}.dat", dtype="float64", mode="w+", shape=(points_use.shape[0], data_matrix[0] ))
+
+            # Interpolate onto the points
+            if interpolator.lower() in ["rbf", "rbfinterpolator","radial basis function", "radialbasisfunction"]:
+                if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ) and allow_dim_drop:
+                    #print("Actually, it's 1D")
+                    drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
+                    print(f"Dropping dimension {drop_dim}")
+                    # Set up disk-store data
+                    
+                    object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( points_use[:,:N_dims], drop_dim, axis=1 ) )
+                else:
+                    #print(f"\n\n\nPoints use shape:\t{points_use.shape}")
+                    object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( points_use[:,:N_dims] )
+                    #print(f"Object data shape:\t{object_data.shape}")
+            elif interpolator.lower() in ["l", "lin", "linear", "linearnd", "delaunay", "delaunaytriangulation"]:
+                if 0.0 in np.sum( np.abs(cell_coords[:,:N_dims]) , axis=0 ):
+                    #print("Actually, it's 1D")
+                    drop_dim = np.argmin( np.abs( np.sum( cell_coords[:,:N_dims] , axis=0 ) ) )
+                    print(f"Dropping dimension {drop_dim}")
+                    #x = np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ))[0] )
+                    #y = data_matrix.T
+                    #x_new = np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ).reshape( np.shape(np.delete( cls.points[:,:N_dims], drop_dim, axis=1 ))[0] )
+                    #print(f"x is shape {np.shape(x)} and y is shape {np.shape(y)}")
+                    #print(f"x_new is shape {np.shape(x_new)} in [{np.min(x_new)}, {np.max(x_new)}]")
+                    object_data = sint.LinearNDInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T )( np.delete( points_use[:,:N_dims], drop_dim, axis=1 ) )
+                else:
+                    object_data = sint.LinearNDInterpolator( cell_coords[:,:N_dims ], data_matrix.T )( points_use[:,:N_dims] )
+            else:
+                raise ValueError( "Invalid interpolator selected" )
+            
+            # Re-arrange back into the keys
+            for i, k in enumerate( list( data_dict.keys() ) ):
+                if not accelerator:
+                    if verbosity>1:
+                        print(f"Received Object Data {k} shape:\t{object_data[:,i].shape}")
+                    cls.data[k] += [object_data[:,i]]
+                elif accelerator.lower() in ["cuda", "cu", "c", "cupy"]:
+                    cls.data[k] += [object_data[:,i].get()]
+
+            end_interpolation = time.perf_counter()
+
+            print(f"\tTime step {t} - Paraview read time: {end_paraview - start_paraview:.2f} seconds, Interpolation time: {end_interpolation - end_paraview:.2f} seconds")
+
+        cls.time_steps = t_steps
+
+        if not cls.time_dependent:
+            for i, k in enumerate( list( cls.data.keys() ) ):
+                
+                # Check if there is a homogeneous size
+                try:
+                    cls.data[k] = np.array( cls.data[k] )
+                except:
+                    raise Warning( "The data is not truly time dependent" )
                         
     def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
                      coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, 
@@ -725,14 +1047,23 @@ class dataReader:
             end_paraview = time.perf_counter()
 
             print(f"\tTime step {t} - Paraview read time: {end_paraview - start_paraview:.2f} seconds")
+
+        #
+        #   Clean up from Paraview read
+        #
+        del foam
+        del cell_centers
+        del cell_data
+        del centers_data
+        del internal_cells
+        del internal_centers
+        del array
         
         cls.data_matrices = []
         cls.object_datas = []
         cls.points_uses = []
         for j, t in enumerate( t_steps ):
             print(f"Current time step {t} at index {j}...")
-
-            
 
             # Extract data from dictionary and move into matrix for interpolation
             if headers_drop:
@@ -815,8 +1146,6 @@ class dataReader:
                     raise ValueError( "Invalid interpolator selected" )
                 cls.object_datas[j] = object_data
                 
-                
-
                 end_interpolation = time.perf_counter()
 
                 print(f"\tTime step {t} - Interpolation time: {end_interpolation - start_interpolation:.2f} seconds")
