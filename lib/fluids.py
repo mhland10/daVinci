@@ -977,6 +977,7 @@ class turbulentShearMixingLayer:
 
         # Pull the cell centers
         cls.cellCenters = cls.initial_time.cell_centers().internal_field
+        print(f"Cell centers type:\t{type(cls.cellCenters)}")
         print(f"Cell centers shape:\t{cls.cellCenters.shape}")
 
         # Get the source points
