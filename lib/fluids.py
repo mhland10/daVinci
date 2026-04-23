@@ -977,8 +977,8 @@ class turbulentShearMixingLayer:
 
         # Pull the cell centers
         cls.cellCenters = cls.initial_time.cell_centers().internal_field
-        print(f"Cell centers type:\t{type(cls.cellCenters)}")
-        print(f"Cell centers flags:\t{cls.cellCenters.flags}")
+        #print(f"Cell centers type:\t{type(cls.cellCenters)}")
+        #print(f"Cell centers flags:\t{cls.cellCenters.flags}")
         print(f"Cell centers shape:\t{cls.cellCenters.shape}")
 
         # Get the source points
@@ -1023,6 +1023,12 @@ class turbulentShearMixingLayer:
         # Write the velocity field
         cls.initial_time["U"].internal_field = cls.targetVelocities
         print("Data written to case.")
+
+        del cls.sourceVelocities
+        del cls.sourceIndices
+        del cls.sourceVelocities
+        del cls.targetVelocities
+        del cls.case
 
 
 class boundaryLayer:
