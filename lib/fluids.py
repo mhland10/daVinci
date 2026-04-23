@@ -1026,7 +1026,6 @@ class turbulentShearMixingLayer:
 
         del cls.sourceVelocities
         del cls.sourceIndices
-        del cls.sourceVelocities
         del cls.targetVelocities
         del cls.case
 
