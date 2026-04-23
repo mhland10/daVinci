@@ -993,7 +993,7 @@ class turbulentShearMixingLayer:
                 else:
                     cls.sourcePoints += [ [ cls.domain[0][i], cls.domain[1][j] ] ]
                     cls.sourceIndices += [ [ i, j ] ]
-        cls.sourcePoints = np.array( cls.sourcePoints ).astype(np.float32)
+        cls.sourcePoints = np.array( cls.sourcePoints )
         cls.sourceIndices = np.array( cls.sourceIndices )
         print(f"Source points shape:\t{cls.sourcePoints.shape}")
 
@@ -1013,10 +1013,11 @@ class turbulentShearMixingLayer:
         # Get target velocities
         interpolator = sint.RBFInterpolator( cls.sourcePoints, cls.sourceVelocities, neighbors=src_pts )
         print("Interpolator initialized.")
+        cls.targetVelocities = np.zeros_like( cls.cellCenters )
         if len(cls.domain)>2:
             cls.targetVelocities = interpolator( cls.cellCenters )
         else:
-            cls.targetVelocities = interpolator( cls.cellCenters[:,:2] )
+            cls.targetVelocities[:, :2] = interpolator( cls.cellCenters[:,:2] )
         print("Interpolation complete.")
 
         # Write the velocity field
