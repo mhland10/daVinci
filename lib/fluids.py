@@ -1022,6 +1022,7 @@ class turbulentShearMixingLayer:
 
         # Write the velocity field
         cls.initial_time["U"].internal_field = cls.targetVelocities
+        print("Data written to case.")
 
 
 class boundaryLayer:
