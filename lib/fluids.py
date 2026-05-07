@@ -507,6 +507,11 @@ class turbulentShearMixingLayer:
         # Calculate convective velocity
         if averaging_axis==0:
             cls.U_c = np.trapz( cls.favre_data["rho"] * cls.favre_data["u"], cls.coords[cls.spanwise_coord] ) / np.trapz( cls.favre_data["rho"] , cls.coords[cls.spanwise_coord] ) 
+        elif isinstance( averaging_axis, tuple ):
+            avg_axes = tuple(i for i in range(len(cls.coords)) if i != cls.spanwise_coord )
+            int_domain = np.mean( cls.coords[cls.spanwise_coord], axis=avg_axes )
+            cls.U_c = np.trapz( cls.favre_data["rho"] * cls.favre_data["u"], int_domain ) / np.trapz( cls.favre_data["rho"] , int_domain ) 
+            cls.int_domain = int_domain
         else:
             cls.U_c = []
             for i in range( cls.data[streamwise_velocity_key].shape[0] ):
@@ -525,6 +530,15 @@ class turbulentShearMixingLayer:
             U_c = ( cls.favre_data["u"][-1] + cls.favre_data["u"][0] ) / 2
             integral_val = np.trapz( rho_avg * ( cls.favre_data["u"][-1] - cls.favre_data["u"] ) * ( cls.favre_data["u"] - cls.favre_data["u"][0] ), cls.coords[cls.spanwise_coord] )
             cls.delta_theta = integral_val / ( np.mean( rho_avg ) * ( DU ** 2 ) )
+        elif isinstance( averaging_axis, tuple ):
+            DU = np.abs( u_tildes[:, -1] - u_tildes[:, 0] )
+            U_c = ( cls.favre_data["u"][:,-1] + cls.favre_data["u"][:,0] ) / 2
+            cls.DU = DU
+            cls.integral_val = []
+            for i in range( cls.favre_data["u"].shape[0] ):
+                cls.integral_val += [np.trapz( rho_avg[i] * ( cls.favre_data["u"][i,-1] - cls.favre_data["u"][i] ) * ( cls.favre_data["u"][i] - cls.favre_data["u"][i,0] ), int_domain )]
+            cls.integral_val = np.array( cls.integral_val )
+            cls.delta_theta = cls.integral_val / ( np.mean( rho_avg, axis=-1 ) * ( DU ** 2 ) )
         elif len(cls.favre_data["u"].shape)>1 and not averaging_axis==0 :
             cls.delta_theta = []
             for i in range( cls.favre_data["u"].shape[0] ):
@@ -538,6 +552,8 @@ class turbulentShearMixingLayer:
         # Calculate the vorticity thickness
         if averaging_axis==0 and len(cls.favre_data["u"].shape)==1:
             cls.delta_omega = ( DU + U_c ) / np.max( np.gradient( u_tildes, cls.coords[cls.spanwise_coord] ) )
+        elif isinstance( averaging_axis, tuple ):
+            cls.delta_omega = ( DU + cls.U_c ) / np.max( np.gradient( u_tildes, int_domain, axis=-1 ), axis=-1 )
         elif len(cls.favre_data["u"].shape)>1 and not averaging_axis==0 :
             cls.delta_omega = []
             for i in range( cls.favre_data["u"].shape[0] ):

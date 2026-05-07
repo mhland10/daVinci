@@ -475,6 +475,15 @@ class dataReader:
                     cls.data[k] = np.array( cls.data[k] )
                 except:
                     raise Warning( "The data is not truly time dependent" )
+                
+        #
+        #   Clean up data
+        #
+        del cls.foam
+        del cls.cell_centers
+        del cls.data_matrix
+        del cls.data_dict
+        del cls.cell_coords
 
     def foamCaseRead_foamNative( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
                      coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, 
