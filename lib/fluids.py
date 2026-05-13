@@ -449,10 +449,10 @@ class turbulentShearMixingLayer:
         if not len(cls.coord_sys)==cls.coords.shape[0]:
             if len(cls.coords.shape)==1:
                 raise ValueError("The first axis of the coordinates is the number of points, make sure that coordinate entry is 2D NumPy array.")
-            raise ValueError("Coordinate system contains a different number of axes than coordinates provided.")
+            #raise ValueError("Coordinate system contains a different number of axes than coordinates provided.")
 
 
-    def shearLayerProfile_measure(cls, data, averaging_axis=0, streamwise_velocity_key="U:x", streamwise_coordinate=0, density_key="rho", spanwise_velocity_key="U:y", 
+    def shearLayerProfile_measure(cls, data, averaging_axis=0, time_averaging=True, streamwise_velocity_key="U:x", streamwise_coordinate=0, density_key="rho", spanwise_velocity_key="U:y", 
                                   tke_key="k", turb_modeling=True, turb_viscosity_key="nut", turb_dissipation_key="omega", 
                                   temperature_key="T", C_delta=0.0384, ke_coeff = { "C_mu":0.09 }, 
                                   ko_coeff = { "beta*": 0.009, "sigma_k":0.85 }, viscosity_func="sutherland", 
@@ -509,9 +509,9 @@ class turbulentShearMixingLayer:
             cls.U_c = np.trapz( cls.favre_data["rho"] * cls.favre_data["u"], cls.coords[cls.spanwise_coord] ) / np.trapz( cls.favre_data["rho"] , cls.coords[cls.spanwise_coord] ) 
         elif isinstance( averaging_axis, tuple ):
             avg_axes = tuple(i for i in range(len(cls.coords)) if i != cls.spanwise_coord )
-            int_domain = np.mean( cls.coords[cls.spanwise_coord], axis=avg_axes )
-            cls.U_c = np.trapz( cls.favre_data["rho"] * cls.favre_data["u"], int_domain ) / np.trapz( cls.favre_data["rho"] , int_domain ) 
-            cls.int_domain = int_domain
+            cls.avg_axes = avg_axes
+            cls.int_domain = np.mean( cls.coords[cls.spanwise_coord], axis=avg_axes )
+            cls.U_c = np.trapz( cls.favre_data["rho"] * cls.favre_data["u"], cls.int_domain ) / np.trapz( cls.favre_data["rho"] , cls.int_domain ) 
         else:
             cls.U_c = []
             for i in range( cls.data[streamwise_velocity_key].shape[0] ):
@@ -531,14 +531,19 @@ class turbulentShearMixingLayer:
             integral_val = np.trapz( rho_avg * ( cls.favre_data["u"][-1] - cls.favre_data["u"] ) * ( cls.favre_data["u"] - cls.favre_data["u"][0] ), cls.coords[cls.spanwise_coord] )
             cls.delta_theta = integral_val / ( np.mean( rho_avg ) * ( DU ** 2 ) )
         elif isinstance( averaging_axis, tuple ):
-            DU = np.abs( u_tildes[:, -1] - u_tildes[:, 0] )
-            U_c = ( cls.favre_data["u"][:,-1] + cls.favre_data["u"][:,0] ) / 2
-            cls.DU = DU
-            cls.integral_val = []
-            for i in range( cls.favre_data["u"].shape[0] ):
-                cls.integral_val += [np.trapz( rho_avg[i] * ( cls.favre_data["u"][i,-1] - cls.favre_data["u"][i] ) * ( cls.favre_data["u"][i] - cls.favre_data["u"][i,0] ), int_domain )]
-            cls.integral_val = np.array( cls.integral_val )
-            cls.delta_theta = cls.integral_val / ( np.mean( rho_avg, axis=-1 ) * ( DU ** 2 ) )
+            if len(u_tildes.shape)==1:
+                cls.DU = np.abs( u_tildes[-1] - u_tildes[0] )
+                cls.integral_val = np.trapz( rho_avg * ( cls.favre_data["u"][-1] - cls.favre_data["u"] ) * ( cls.favre_data["u"] - cls.favre_data["u"][0] ), cls.int_domain )
+                cls.delta_theta = cls.integral_val / ( np.mean( rho_avg ) * ( cls.DU ** 2 ) )
+            else:
+                DU = np.abs( u_tildes[:, -1] - u_tildes[:, 0] )
+                U_c = ( cls.favre_data["u"][:,-1] + cls.favre_data["u"][:,0] ) / 2
+                cls.DU = DU
+                cls.integral_val = []
+                for i in range( cls.favre_data["u"].shape[0] ):
+                    cls.integral_val += [np.trapz( rho_avg[i] * ( cls.favre_data["u"][i,-1] - cls.favre_data["u"][i] ) * ( cls.favre_data["u"][i] - cls.favre_data["u"][i,0] ), cls.int_domain )]
+                cls.integral_val = np.array( cls.integral_val )
+                cls.delta_theta = cls.integral_val / ( np.mean( rho_avg, axis=-1 ) * ( DU ** 2 ) )
         elif len(cls.favre_data["u"].shape)>1 and not averaging_axis==0 :
             cls.delta_theta = []
             for i in range( cls.favre_data["u"].shape[0] ):
@@ -553,7 +558,10 @@ class turbulentShearMixingLayer:
         if averaging_axis==0 and len(cls.favre_data["u"].shape)==1:
             cls.delta_omega = ( DU + U_c ) / np.max( np.gradient( u_tildes, cls.coords[cls.spanwise_coord] ) )
         elif isinstance( averaging_axis, tuple ):
-            cls.delta_omega = ( DU + cls.U_c ) / np.max( np.gradient( u_tildes, int_domain, axis=-1 ), axis=-1 )
+            if len(u_tildes.shape)==1:
+                cls.delta_omega = ( cls.DU + cls.U_c ) / np.max( np.gradient( u_tildes, cls.int_domain ) )
+            else:
+                cls.delta_omega = ( cls.DU + cls.U_c ) / np.max( np.gradient( u_tildes, cls.int_domain, axis=-1 ), axis=-1 )
         elif len(cls.favre_data["u"].shape)>1 and not averaging_axis==0 :
             cls.delta_omega = []
             for i in range( cls.favre_data["u"].shape[0] ):

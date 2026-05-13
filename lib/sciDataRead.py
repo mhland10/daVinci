@@ -1684,7 +1684,7 @@ class dataReader:
 
     def hdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], 
                      coord_prefix="XCEN", dims=['x','y','z'], interpolator="rbf", 
-                     coords_system=['x','y','z'], mp_method=None, headers_exclude=[], verbosity=1, 
+                     coords_system=['x','y','z'], mp_method=None, headers_exclude=[], verbosity=0, 
                      N_srcPts=1000, small_time=1e-18, store_caseData_2disk=False, 
                      store_data_2disk=False ):
         """
@@ -2946,6 +2946,8 @@ class structuredGrid(dataReader):
             if verbosity>0:
                 print(f"Re-forming key {k}")
             cls.data[k] = np.reshape( cls.data[k], reform_shape )
+
+        
 
 
     def gradients(cls ):
