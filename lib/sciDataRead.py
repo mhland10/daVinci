@@ -1812,12 +1812,14 @@ class dataReader:
                         if c.lower()==cc.lower():
                             #print(f"Coordinate {c} matches {cc}.")
                             obj_coordinates[:,i] = raw_coordinates[:,j] 
-                #print(f"The object coordinates are in shape:\t{np.shape(obj_coordinates)}")
+                print(f"The object coordinates are in shape:\t{np.shape(obj_coordinates)}")
                 cls.obj_coordinates = obj_coordinates
             if store_caseData_2disk:
                 data_shape = ( len(t_steps) ,) + ( len( obj_coordinates[:,0] ) ,)
             else:
-                data_shape = ( len(t_steps) ,) + ( len( cls.points[0] ) ,)
+                data_shape = ( len(t_steps) ,) + ( np.array( cls.points ).shape[0] ,)
+            print(f"The points are shape:\t{np.shape(np.array(cls.points))}")
+            print(f"The data shape is:\t{data_shape}")
             
 
             # Initialize our data
@@ -1851,7 +1853,7 @@ class dataReader:
                 for i in range( len(t_steps) ):
                     
                     print(f"\n\nworking on time step {t_steps[i]:.3e}")
-                    print(f"\twhich is index {np.abs(cls.time_steps-t_steps[i])<=small_time}")
+                    #print(f"\twhich is index {np.abs(cls.time_steps-t_steps[i])<=small_time}")
                     
                     fl_nm = np.array(cls.file_list)[np.abs(cls.time_steps-t_steps[i])<=small_time][0]
                     t_step = t_steps[i]
