@@ -152,6 +152,9 @@ class dataReader:
         # Set the time limits
         self.t_lims = t_lims
 
+        # Create the type of data object
+        self.obj_type = None
+
     def foamCaseRead_legacy( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
                      coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, 
                      headers_read=None, headers_drop=[], N_sourcePts=1000, allow_dim_drop=True, 
@@ -2117,14 +2120,33 @@ class dataReader:
         import h5py as h5
 
         with h5.File(os.path.join(working_dir, filename + ".h5"), "a") as f:
+
+            #
+            #   Write the data
+            #
             for key, value in cls.data.items():
                 if key in f:
                     del f[key]  # Remove existing dataset
                 f.create_dataset(key, data=value)
-
+            
+            #
+            #   Write the time steps
+            #
             if "timesteps" in f:
                 del f["timesteps"]
             f.create_dataset("timesteps", data=cls.time_steps)
+
+            #
+            #   Write the points used
+            #
+            if "points" in f:
+                del f["points"]
+            f.create_dataset("points", data=cls.points)
+
+            #
+            #   Write metadata about the data
+            #
+            f.attrs["type"] = cls.obj_type
 
     def hdf5Read( cls , filename , working_dir ):
         """
@@ -2145,9 +2167,16 @@ class dataReader:
             keys_avail = list(f.keys())
             print(f"Available keys:\t{keys_avail}")
 
+            try:
+                cls.obj_type = f.attrs["type"]
+            except KeyError:
+                cls.obj_type = "unknown"
+
             for k in keys_avail:
                 if k=="timesteps":
                     cls.time_steps = f[k][()]
+                elif k=="points":
+                    cls.points = f[k][()]
                 else:
                     cls.data[k] = f[k][()]
     
@@ -2300,6 +2329,9 @@ class sweep(dataReader):
         
         # Set the object to use time-dependent data
         self.time_dependent=True
+
+        # Set the object type
+        self.obj_type = "sweep"
 
     def anchorCorrection(cls, data_dir, scanWindowWidth, N, rel_tol=1e-18, abs_tol=1e-9, read_method="hdf5dataread", 
                          centering_method="edge", centering_header="Mach", input_args=(), iterations=1, iter_mult=2, 
@@ -2645,7 +2677,8 @@ class rake(dataReader):
         # Set the read raw values
         self.read_raw = read_raw
 
-                     
+        # Set the object type
+        self.obj_type = "rake"
 
     def coordinateChange( cls , coord_tol=1e-9 , nDimensions=2 , fix_blanks=False , rot_axis_val=1 ):
         """
@@ -2935,6 +2968,9 @@ class structuredGrid(dataReader):
         # Move point data
         self.points = np.array([ X_flat, Y_flat, Z_flat ]).T
 
+        # Set the object type
+        self.obj_type = "sweep"
+
     def reform(cls, verbosity=0 ):
         """
             This method puts the data back in the shape of the input points to make grid 
@@ -3055,6 +3091,9 @@ class particles_EulerLagrange(dataReader):
         # Move back to the original directory
         if data_directory:
             os.chdir( og_dir )
+
+        # Set the object type
+        self.obj_type = "elparticles"
 
     def convergeParticleReader(cls, working_dir, accelerator=None, group_path=["STREAM_00","PARCEL_DATA","LIQUID_PARCEL_DATA"], particle_prefix="LIQPARCEL" ):        
         """
@@ -3486,6 +3525,9 @@ class fullCV(dataReader):
 
         # Initialize the dataReader object to inherit
         super().__init__( [[],[],[]], datafile, file_format )
+
+        # Set the object type
+        self.obj_type = "controlvolume"
 
 
     def fullhdf5DataRead(cls, working_dir, group_path=["STREAM_00","CELL_CENTER_DATA"], coord_prefix="XCEN", dims=['x','y','z'], interpolator="lin", coords_system=['x','y','z'], mp_method=None, headers_exclude=[] ):
