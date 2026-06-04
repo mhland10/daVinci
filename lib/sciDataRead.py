@@ -2107,13 +2107,19 @@ class dataReader:
             print("Hello there, reading raw data are we?")
                 
 
-    def hdf5Write( cls , filename , working_dir, skip_headers=[] ):
+    def hdf5Write( cls , filename , working_dir, skip_headers=[], overwrite=False ):
         """
         This method writes cls.data to an *.h5 file.
 
         Args:
             filename (string):      The file name.
+
             working_dir (string):   The directory where the file is.
+
+            skip_headers (list, optional): The headers to skip when writing the data.
+
+            overwrite (bool, optional): Whether or not to overwrite the file if it already exists. 
+                                        Defaults to False.
 
         """
 
@@ -2122,31 +2128,63 @@ class dataReader:
         with h5.File(os.path.join(working_dir, filename + ".h5"), "a") as f:
 
             #
-            #   Write the data
+            #   Check and write metadata about the data
             #
-            for key, value in cls.data.items():
-                if key in f:
-                    del f[key]  # Remove existing dataset
-                f.create_dataset(key, data=value)
-            
+            if not cls.obj_type.lower()==f.attrs.get("type", "").lower():
+                raise Warning(f"Object type {cls.obj_type} does not match the type in the file, {f.attrs.get('type', '')}. Overwriting the type in the file.")
+            f.attrs["type"] = cls.obj_type
+
             #
             #   Write the time steps
             #
             if "timesteps" in f:
-                del f["timesteps"]
-            f.create_dataset("timesteps", data=cls.time_steps)
+
+                if overwrite:
+                    del f["timesteps"]
+                    f.create_dataset( "timesteps", data=cls.time_steps, maxshape=(None,), chunks=True )
+                else:
+                    ts = f["timesteps"]
+
+                    Nt_old = ts.shape[0]
+                    Nt_new = len(cls.time_steps)
+
+                    ts.resize((Nt_old + Nt_new,))
+                    ts[Nt_old:] = cls.time_step
+            else:
+                f.create_dataset("timesteps", data=cls.time_steps, maxshape=(None,), chunks=True)
+            
+
+            #
+            #   Write the data
+            #
+            for key, value in cls.data.items():
+
+                if key in f:
+
+                    if overwrite:
+                        del f[key]
+                        f.create_dataset( key, data=value, maxshape=(None,), chunks=True )
+
+                    else:
+                        dset = f[key]
+
+                        nt_old = dset.shape[0]
+                        nt_new = value.shape[0]
+
+                        dset.resize((nt_old + nt_new,) + dset.shape[1:])
+                        dset[nt_old:nt_old + nt_new] = value
+
+                else:
+                    f.create_dataset( key, data=value, maxshape=(None,), chunks=True )     
 
             #
             #   Write the points used
             #
-            if "points" in f:
+            if "points" in f and overwrite:
                 del f["points"]
             f.create_dataset("points", data=cls.points)
 
-            #
-            #   Write metadata about the data
-            #
-            f.attrs["type"] = cls.obj_type
+            
 
     def hdf5Read( cls , filename , working_dir ):
         """
