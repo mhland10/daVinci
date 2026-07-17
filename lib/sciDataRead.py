@@ -2130,8 +2130,8 @@ class dataReader:
             #
             #   Check and write metadata about the data
             #
-            if not cls.obj_type.lower()==f.attrs.get("type", "").lower():
-                raise Warning(f"Object type {cls.obj_type} does not match the type in the file, {f.attrs.get('type', '')}. Overwriting the type in the file.")
+            if not cls.obj_type.lower()==f.attrs.get("type", "").lower() and not overwrite:
+                raise Warning(f"Object type '{cls.obj_type}' does not match the type in the file, '{f.attrs.get('type', '')}'. Overwriting the type in the file.")
             f.attrs["type"] = cls.obj_type
 
             #
@@ -2159,11 +2159,17 @@ class dataReader:
             #
             for key, value in cls.data.items():
 
+                # Set the key maxshape
+                key_maxshape = []
+                for i in range( len( np.shape(value) ) ):
+                    key_maxshape += [None]
+                key_maxshape = tuple(key_maxshape)
+
                 if key in f:
 
                     if overwrite:
                         del f[key]
-                        f.create_dataset( key, data=value, maxshape=(None,), chunks=True )
+                        f.create_dataset( key, data=value, maxshape=key_maxshape, chunks=True )
 
                     else:
                         dset = f[key]
@@ -2175,7 +2181,7 @@ class dataReader:
                         dset[nt_old:nt_old + nt_new] = value
 
                 else:
-                    f.create_dataset( key, data=value, maxshape=(None,), chunks=True )     
+                    f.create_dataset( key, data=value, maxshape=key_maxshape, chunks=True )     
 
             #
             #   Write the points used
@@ -3877,7 +3883,7 @@ class fullCV(dataReader):
 
     def foamCaseRead( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
                      coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, 
-                     headers_read=None, headers_drop=None, N_sourcePts=1000, allow_dim_drop=True ):
+                     headers_read=None, headers_drop=[], N_sourcePts=1000, allow_dim_drop=True ):
         """
             This reader reads an OpenFOAM case using Paraview
 

@@ -930,16 +930,15 @@ class Decomposition():
         self.Y = {}
         self.A = {}
         for i , v in enumerate( variables ):
-            print(f"Data is shape {data[v].shape}")
+            print(f"Data {v} is shape {data[v].shape}")
             #
             # For matrix data
             #
             if len( data[v].shape )>1:
                 d = np.moveaxis( data[v] , decomposition_axis , -1 )
-                d_shape = np.shape( d )
-                d_ = np.reshape( d , ( np.prod( d_shape[:-1] ) ,) + ( d_shape[-1] ) )
-                self.X[v] = np.moveaxis( np.moveaxis( d_ , -1 , 0 )[:-1,...] , 0 , -1 )
-                self.Y[v] = np.moveaxis( np.moveaxis( d_ , -1 , 0 )[1:,...] , 0 , -1 )
+                d_ = d.reshape(-1, d.shape[-1])
+                self.X[v] = d_[:, :-1]
+                self.Y[v] = d_[:, 1:]
 
                 self.A[v] = np.matmul( self.Y[v], np.linalg.pinv( self.X[v] ) )
 
@@ -972,7 +971,7 @@ class Decomposition():
         for v in cls.variables:
             cls.POD_modes[v], cls.energies[v], _ = np.linalg.svd( cls.X[v] )
         
-    def DMD( cls ):
+    def DMD( cls, max_rank=None, include_POD=False ):
         """
         Calculates the Dynamic Mode Decomposition from the Decomposition
             object.
@@ -983,19 +982,55 @@ class Decomposition():
 
         """
 
+        
+
         cls.eigenvalues = {}
         cls.DMD_modes = {}
-        cls.POD_modes = {}
-        cls.energies = {}
+        if include_POD:
+            cls.POD_modes = {}
+            cls.energies = {}
+        POD_modes = {}
+        energies = {}
         for v in cls.variables:
-            cls.POD_modes[v], cls.energies[v], _ = np.linalg.svd( cls.X[v] )
-            if np.iscomplexobj( cls.POD_modes[v] ):
-                A_tilda = np.matmul( cls.POD_modes[v].H, cls.A[v], cls.POD_modes[v] )
+
+            # Find the POD
+            POD_modes[v], energies[v], V = np.linalg.svd( cls.X[v], full_matrices=False )
+
+            # Limit the rank
+            if not max_rank:
+                rank_limit = np.min( cls.X[v].shape )
             else:
-                A_tilda = np.matmul( cls.POD_modes[v].T, cls.A[v], cls.POD_modes[v] )
-            Lambda, V_tilda = np.linalg.eig( A_tilda )
-            cls.DMD_modes[v] = np.matmul( cls.POD_modes[v], V_tilda )
+                rank_limit=max_rank
+            Ur = POD_modes[v][:,:rank_limit]
+            Sr = energies[v][:rank_limit]
+            Vr = V[:rank_limit,:]
+            Ar = cls.A[v][:rank_limit,:rank_limit]
+
+            if np.iscomplexobj( Ur ):
+                A_tilde = Ur.H @ cls.Y[v] @ Vr.T @ np.diag(1/Sr)
+            else:
+                A_tilde = Ur.T @ cls.Y[v] @ Vr.T @ np.diag(1/Sr)
+
+            Lambda, W = np.linalg.eig( A_tilde )
+            cls.DMD_modes[v] = np.matmul( Ur, W )
             cls.eigenvalues[v] = Lambda
+
+            if include_POD:
+                cls.POD_modes[v] = Ur
+                cls.energies[v] = Sr
+
+    def diagnostics(cls, output_FrobeniusNorm=True ):
+        """
+            This method can deliver the following diagnostics:
+        1. Frobenius norms (norm(Y)/norm(X))
+
+        """
+
+        if output_FrobeniusNorm:
+            cls.FrobeniusNorms = {}
+            for v in cls.variables:
+                cls.FrobeniusNorms[v] = np.linalg.norm( cls.Y[v] ) / np.linalg.norm( cls.X[v] )
+
 
 
         
