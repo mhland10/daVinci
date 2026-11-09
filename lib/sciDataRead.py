@@ -77,12 +77,15 @@ def point_sweep( anchors, point_Deltas ):
     if not a_shape[0]==d_shape[0]:
         raise ValueError( "Anchors and point_Deltas do not have the same number of dimensions associate with the points" )
     p_shape = ( a_shape[1] ,) + ( a_shape[0] ,) + ( d_shape[1] ,)
+    print(f"Result will have shape: {p_shape}")
 
     # Create and list the 
     points = np.zeros( p_shape )
     for i in range( p_shape[0] ):
-        points[i,...] = anchors[:,i][:, np.newaxis] + point_Deltas
-    
+        try:
+            points[i,...] = anchors[:,i][:, np.newaxis] + point_Deltas
+        except Exception as e:
+            print(f"Typically you will get an error here if the anchors and deltas are not **arrays** of the same shape")
     return points
 
 #==================================================================================================
@@ -158,7 +161,7 @@ class dataReader:
     def foamCaseRead_legacy( cls, working_dir, file_name="foam.foam", verbosity=0, vector_headers=["U"], 
                      coordinate_system=['x', 'y', 'z'], interpolator="rbf", accelerator=None, 
                      headers_read=None, headers_drop=[], N_sourcePts=1000, allow_dim_drop=True, 
-                     engine="paraview", store_caseData_2disk=False, store_data_2disk=False ):
+                     engine="paraview", store_caseData_2disk=False, store_data_2disk=False, decomposed=False ):
         """
             This reader reads an OpenFOAM case using Paraview - Legacy, but slow
 
@@ -248,6 +251,10 @@ class dataReader:
                                                     expected since the data is stored on the disk 
                                                     and not in GPU memory.
 
+            decomposed (boolean, optional):   Whether the OpenFOAM case is decomposed into parallel
+                                                directories. Defaults to False, or a reconstructed 
+                                                case.
+
         """
         # Move to the working directory
         os.chdir( working_dir )
@@ -278,6 +285,13 @@ class dataReader:
         if verbosity>0:
             print(f"The full filename is {full_flnm}")
         cls.foam = pasi.OpenFOAMReader( registrationName=file_name, FileName=full_flnm )
+        if decomposed:
+            renderView1 = pasi.GetActiveViewOrCreate('RenderView')
+            cls.foam.CaseType = "Decomposed Case"
+            renderView1.Update()
+            cls.foam.UpdatePipeline()
+            if verbosity>1:
+                print("Decomposed case detected.")
         cls.foam.MeshRegions = ["internalMesh"]
         cls.foam.UpdatePipeline()
 
@@ -287,6 +301,8 @@ class dataReader:
         
         # Pull the time steps available
         cls.time_steps = np.array( cls.foam.TimestepValues )
+        if verbosity>0:
+            print(f"Time steps available:\t{cls.time_steps}")
 
         # Get cell centers
         cls.cell_centers = pasi.CellCenters(Input=cls.foam)
@@ -437,6 +453,9 @@ class dataReader:
                     object_data = sint.RBFInterpolator( np.delete( cell_coords[:,:N_dims], drop_dim, axis=1 ), data_matrix.T, neighbors=N_sourcePts )( np.delete( points_use[:,:N_dims], drop_dim, axis=1 ) )
                 else:
                     #print(f"\n\n\nPoints use shape:\t{points_use.shape}")
+                    #print(f"\n\nCell coords shape:\t{cell_coords[:,:N_dims].shape}, Data matrix shape:\t{data_matrix.T.shape}")
+                    #print(f"Using {N_sourcePts} source points for interpolation")
+                    #print(f"Points use shape:\t{points_use[:,:N_dims].shape}")
                     object_data = sint.RBFInterpolator( cell_coords[:,:N_dims], data_matrix.T, neighbors=N_sourcePts )( points_use[:,:N_dims] )
                     #print(f"Object data shape:\t{object_data.shape}")
             elif interpolator.lower() in ["l", "lin", "linear", "linearnd", "delaunay", "delaunaytriangulation"]:
@@ -2192,7 +2211,7 @@ class dataReader:
 
             
 
-    def hdf5Read( cls , filename , working_dir ):
+    def hdf5Read( cls , filename , working_dir, headers_skip=[] ):
         """
         This method reads the data from an *.h5 file that corresponds to the rake object.
 
@@ -2212,9 +2231,12 @@ class dataReader:
             print(f"Available keys:\t{keys_avail}")
 
             try:
-                cls.obj_type = f.attrs["type"]
+                test_type = f.attrs["type"]
             except KeyError:
-                cls.obj_type = "unknown"
+                test_type = "unknown"
+            if not cls.obj_type==test_type:
+                raise ValueError( f"Object is type {cls.obj_type} and stored data is {test_type}." )
+                
 
             for k in keys_avail:
                 if k=="timesteps":
@@ -2222,7 +2244,8 @@ class dataReader:
                 elif k=="points":
                     cls.points = f[k][()]
                 else:
-                    cls.data[k] = f[k][()]
+                    if not k in headers_skip:
+                        cls.data[k] = f[k][()]
     
     def dataToDictionary( cls ):
         """
@@ -2611,7 +2634,7 @@ class sweep(dataReader):
         cls.skewness_data = {}
         cls.kurtosis_data = {}
         for i, k in enumerate( list( cls.data.keys() ) ):
-            if not lims:
+            if lims==None:
                 cls.frozen_data[k] = np.mean( cls.data[k], axis=0 )
                 cls.variance_data[k] = np.var( cls.data[k], axis=0 )
                 cls.skewness_data[k] = scst.skew( cls.data[k], axis=0 )
@@ -2674,7 +2697,6 @@ class sweep(dataReader):
                         x_domain = cls.deltas[k_i,i_0:d_i]
                         cls.t_rel[d_i, t_i, k_i] = -np.trapz( 1/cls.U_relative[i_0:d_i,t_i,k_i] , x=x_domain )
         cls.t_relative = np.sum( cls.t_rel, axis=-1 ).T
-
 
 class rake(dataReader):
     """
@@ -3013,7 +3035,7 @@ class structuredGrid(dataReader):
         self.points = np.array([ X_flat, Y_flat, Z_flat ]).T
 
         # Set the object type
-        self.obj_type = "sweep"
+        self.obj_type = "grid"
 
     def reform(cls, verbosity=0 ):
         """
@@ -3029,8 +3051,68 @@ class structuredGrid(dataReader):
                 print(f"Re-forming key {k}")
             cls.data[k] = np.reshape( cls.data[k], reform_shape )
 
-        
+    def hdf5Write( cls , filename , working_dir, skip_headers=[], overwrite=False, write_gridPoints=True ):
+        """
+        This method writes cls.data to an *.h5 file.
 
+        Args:
+            filename (string):      The file name.
+
+            working_dir (string):   The directory where the file is.
+
+            skip_headers (list, optional): The headers to skip when writing the data.
+
+            overwrite (bool, optional): Whether or not to overwrite the file if it already exists. 
+                                        Defaults to False.
+
+            write_gridPoints (bool, optional): Whether or not to write the grid points to the 
+                                                *.h5 file. Defaults to True.
+
+        """
+
+        import h5py as h5
+
+        # Use the inherited hdf5Write method to write the data
+        super().hdf5Write( filename, working_dir, skip_headers=skip_headers, overwrite=overwrite )
+
+        with h5.File(os.path.join(working_dir, filename + ".h5"), "a") as f:
+
+            #
+            #   Write the points used
+            #
+            if "grid points" in f and overwrite:
+                del f["grid points"]
+            f.create_dataset("grid points", data=cls.points_input)   
+
+    def hdf5Read( cls , filename , working_dir, headers_skip=[], read_gridPoints=True ):
+        """
+        This method reads the data from an *.h5 file that corresponds to the rake object.
+
+        Args:
+            filename (string):      The file name.
+
+            working_dir (string):   The directory where the file is.
+
+            headers_skip (list, optional): The headers to skip when reading the data.
+
+            read_gridPoints (bool, optional): Whether or not to read the grid points from the 
+                                                *.h5 file. Defaults to True.
+
+        """
+
+        import h5py as h5
+
+        # Use the inherited hdf5Read method to read the data
+        super().hdf5Read( filename, working_dir, headers_skip=headers_skip )
+
+        with h5.File(os.path.join(working_dir, filename + ".h5"), "r") as f:
+
+            #
+            #   Read the points used
+            #
+            if read_gridPoints:
+                cls.points_input = f["grid points"][:]
+                cls.points_shape = np.shape( cls.points_input )[1:]
 
     def gradients(cls ):
         """

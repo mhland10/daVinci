@@ -26,6 +26,210 @@ import numpy as np
 from transform import *
 from sciDataRead import sweep
 from distFunctions import *
+from numba import prange, jit, njit
+
+#==================================================================================================
+#
+#   Fluid Data Functions
+#
+#==================================================================================================
+
+def adv_residual( dB_dt, dB_dxi, A ):
+    """
+        This function provides a foundation for calculating the residual of the inviscid advection
+    equation according to:
+    $$
+        \partial_t \beta + a \partial_{x_i} \beta = 0
+    $$
+
+        Note that these need to be 1D arrays, or flattened arrays.
+
+    Args:
+        dB_dt (float - NumPy 1DArray):  The 1D array of the time derivative.
+        dB_dxi (float - NumPy 1DArray): The 1D array of the spatial derivative.
+        A (float - NumPy 1DArray):      The 1D array of the wavespeeds
+
+    Returns:
+        residual (float - NumPy 1DArray):   The residual of the advection equation
+    """
+    return dB_dt + A*dB_dxi
+
+def lucasKanade_1D( dB_dt, dB_dx, window, dx=1.0, wavespeed_limit=1e6 ):
+    """
+        This function calculates the wave speed for B according to the Lucas-Kanade algorithm:
+    $$
+        a = \frac{\sum(\partial_t B\partial_x B)}{\sum(\partial_x B^2)}
+    $$
+
+    Args:
+        dB_dt (float - NumPy 2DArray):  The time derivative of B.
+
+        dB_dx (float - NumPy 2DArray):  The spatial gradient of B.
+
+        window (int - NumPy 1DArray):   The window to find the speed over.
+
+        dx (float, optional):   The dx value such that we threshold the denominator over such that
+                                valid wavespeeds are only where denominator*(dx^2)>1. Defaults to 
+                                1.0, where the denominator needs to be above unity.
+
+        wavespeed_limit (float, optional):  The limit for wavespeed to be recorded. Defaults to 1e6
+                                            which is a massive speed.
+
+    Returns:
+        wavespeed (float - NumPy 2DArray):  The calculated wavespeed according to the Lucas-Kanade
+                                            algorithm.
+
+    """
+
+    data_shape = dB_dt.shape
+
+    wavespeed = np.zeros(data_shape)
+
+    for ti in range( data_shape[0] ):
+        for xi in range( data_shape[1] ):
+
+            # Set the bounds of the summation window
+            xi_bounds = np.maximum( np.minimum( np.array([ xi - window[1]//2, xi + window[1]//2+1 ]), data_shape[1] ), 0 )
+            ti_bounds = np.maximum( np.minimum( np.array([ ti - window[0]//2, ti + window[0]//2+1 ]), data_shape[0] ), 0 )
+
+            # Define the window areas
+            window_area = ( xi_bounds[1] - xi_bounds[0] ) * ( ti_bounds[1] - ti_bounds[0] )
+            xbounds_area = ( xi_bounds[1] - xi_bounds[0] ) **2
+
+            # Find the numerator and denominator
+            numerator = np.sum( dB_dt[ti_bounds[0]:ti_bounds[1], xi_bounds[0]:xi_bounds[1]] * dB_dx[ti_bounds[0]:ti_bounds[1], xi_bounds[0]:xi_bounds[1]] ) / window_area
+            denominator = np.sum( dB_dx[ti_bounds[0]:ti_bounds[1], xi_bounds[0]:xi_bounds[1]]**2 ) / xbounds_area
+
+            # Threshold the data and store
+            if np.abs(denominator)>=(1/(dx**2)):
+                wavespeed_calc = -numerator/denominator
+                if np.abs(wavespeed_calc)<=wavespeed_limit:
+                    wavespeed[ti,xi] = wavespeed_calc
+
+    return wavespeed
+
+@njit( parallel=True, cache=True )
+def lucasKanade_1D_numba( dB_dt, dB_dx, window, dx=1.0, wavespeed_limit=1e6 ):
+    """
+        This function calculates the wave speed for B according to the Lucas-Kanade algorithm:
+    $$
+        a = \frac{\sum(\partial_t B\partial_x B)}{\sum(\partial_x B^2)}
+    $$
+
+    Args:
+        dB_dt (float - NumPy 2DArray):  The time derivative of B.
+
+        dB_dx (float - NumPy 2DArray):  The spatial gradient of B.
+
+        window (int - NumPy 1DArray):   The window to find the speed over.
+
+        dx (float, optional):   The dx value such that we threshold the denominator over such that
+                                valid wavespeeds are only where denominator*(dx^2)>1. Defaults to 
+                                1.0, where the denominator needs to be above unity.
+
+        wavespeed_limit (float, optional):  The limit for wavespeed to be recorded. Defaults to 1e6
+                                            which is a massive speed.
+
+    Returns:
+        wavespeed (float - NumPy 2DArray):  The calculated wavespeed according to the Lucas-Kanade
+                                            algorithm.
+
+    """
+
+    data_shape = dB_dt.shape
+
+    wavespeed = np.zeros(data_shape)
+
+    for ti in prange( data_shape[0] ):
+        for xi in prange( data_shape[1] ):
+
+            # Set the bounds of the summation window
+            xi_bounds = np.maximum( np.minimum( np.array([ xi - window[1]//2, xi + window[1]//2+1 ]), data_shape[1] ), 0 )
+            ti_bounds = np.maximum( np.minimum( np.array([ ti - window[0]//2, ti + window[0]//2+1 ]), data_shape[0] ), 0 )
+
+            # Define the window areas
+            window_area = ( xi_bounds[1] - xi_bounds[0] ) * ( ti_bounds[1] - ti_bounds[0] )
+            xbounds_area = ( xi_bounds[1] - xi_bounds[0] ) **2
+
+            # Find the numerator and denominator
+            numerator = np.sum( dB_dt[ti_bounds[0]:ti_bounds[1], xi_bounds[0]:xi_bounds[1]] * dB_dx[ti_bounds[0]:ti_bounds[1], xi_bounds[0]:xi_bounds[1]] ) / window_area
+            denominator = np.sum( dB_dx[ti_bounds[0]:ti_bounds[1], xi_bounds[0]:xi_bounds[1]]**2 ) / xbounds_area
+
+            # Threshold the data and store
+            if np.abs(denominator)>=(1/(dx**2)):
+                wavespeed_calc = -numerator/denominator
+                if np.abs(wavespeed_calc)<=wavespeed_limit:
+                    wavespeed[ti,xi] = wavespeed_calc
+
+    return wavespeed
+
+@njit( parallel=True, cache=True )
+def averagingFilter_2D_numba( A, window ):
+
+    data_shape = A.shape
+
+    A_filtered = np.zeros_like(A)
+
+    for ti in prange( data_shape[0] ):
+        for xi in prange( data_shape[1] ):
+
+            # Set the bounds of the summation window
+            xi_bounds = np.maximum( np.minimum( np.array([ xi - window[1]//2, xi + window[1]//2+1 ]), data_shape[1] ), 0 )
+            ti_bounds = np.maximum( np.minimum( np.array([ ti - window[0]//2, ti + window[0]//2+1 ]), data_shape[0] ), 0 )
+
+            # Define the window areas
+            window_area = ( xi_bounds[1] - xi_bounds[0] ) * ( ti_bounds[1] - ti_bounds[0] )
+
+            A_filtered[ti,xi] = np.sum( A[ti_bounds[0]:ti_bounds[1],xi_bounds[0]:xi_bounds[1]] ) / window_area
+
+    return A_filtered
+
+def mixingWidth( data, input_domain, threshold=0.05, bound=None ):
+    """
+        This function takes the input data array and finds the mixing width according to the 
+    formula:
+    $$
+        \mathcal{L}=\int^\infty_{-\infty} \frac{\beta-\beta_0}{\beta_1-\beta_0} dy
+    $$
+
+    Args:
+        data (NumPy 3D array):  The data to find the mixing width of. The data must be in the 
+                                format of:
+
+                                Axis 0: Time
+                                Axis 1: Spatial axis independent of mixing
+                                Axis 2: Spatial axis of mixing
+
+        input_domain (NumPy 1D or 2D array): The domain of the data. If the data is 2D, then the
+
+        threshold (float, optional): The threshold for determining the mixing width. Defaults to 0.05.
+
+    Returns:
+        mixing_width (NumPy 2D array): The calculated mixing width for the data. The shape is:
+
+    """
+
+    data_shape = np.shape(data)
+
+    mixing_width = np.zeros_like( data[...,0] )
+
+    for i in range( data_shape[0] ):
+        for j in range( data_shape[1] ):
+            if np.isnan( data[i,j,:] ).any():
+                raise ValueError(f"NaN values found in data at index ({i},{j}).")
+
+            beta = data[i,j,:]
+
+            beta_hat = np.fft.rfft(beta)
+
+            R_hat = beta_hat * np.conj(beta_hat)
+
+            R = np.fft.irfft(R_hat) 
+
+            
+
+    return mixing_width
+
 
 #==================================================================================================
 #
@@ -362,6 +566,226 @@ class compressibleGas:
         cls.frozen_shock_profile = {}
         for key, data in cls.frozen_shock.data.items():
             cls.frozen_shock_profile[key] = np.nanmean( data, axis=0 )
+
+    def characteristicsDiagram(cls, kernel=np.array([-1, 0, 1]), headers=None, dxis=None ):
+        """
+            This function calculates the characteristics for the parameters given.
+
+        Args:
+            kernel (float - NumPy 1DArray, optional):   The kernel to find the wave with. This 
+                                                        kernel will be convolved along the spatial
+                                                        axes stored in the data objet. Defaults to 
+                                                        np.array([-1, 0, 1]).
+                            
+            headers (list, optional):  The headers of the data to find the characteristics of. 
+                                        Defaults to None, which uses the keys stored in the data
+                                        dictionary.
+
+            dxis (float - NumPy 1DArray, optional): This is the sampling spacing in the format:
+
+                                                    [ dx, dy, dz ]
+
+        """
+
+        if dxis is not None:
+            if len(dxis)<(len(cls.dims)-1):
+                raise ValueError(f"dxs are length {len(dxis)}, but there are {len(cls.dims)-1} dimensions to the data")
+
+        cls.char_data = {}
+        for i, k in enumerate( list( cls.data.keys() ) ):
+
+            if headers==None or k in headers:
+                print(f"Calculating characteristics of {k}.")
+
+                for j, kc in enumerate( cls.dims ):
+                    if kc != "t":
+                        print(f"\tCalculating characteristics along {kc}.")
+
+                        cls.char_data[f"{k}:{kc}"] = np.zeros_like( cls.data[k] )
+
+                        if kc=="x":
+                            coord_axis = 0
+                        elif kc=="y":
+                            coord_axis = 1
+                        elif kc=="z":
+                            coord_axis = 2
+
+                        data_flattened = np.moveaxis(cls.data[k], coord_axis+1, -1).reshape( cls.data[k].shape[coord_axis], -1 )
+                        print(f"\t\tFlattened data shape is: {data_flattened.shape}")
+                        convData_flat = np.zeros_like( data_flattened )
+
+                        for ii in range(data_flattened.shape[0]):
+                            convData_flat[ii] = np.convolve( data_flattened[ii], kernel, mode='same' )
+
+                        cls.char_data[f"{k}:{kc}"] = np.moveaxis(convData_flat.reshape(cls.data[k].shape[coord_axis], -1).T, -1, coord_axis)
+
+    def wavespeedMeasurement(cls, dxis, headers=None, waveSpeedBounds=None, store_ders=False, algorithm="lucas-kanade", N_window=5 ):
+        """
+            This method takes the data, or the characteristics of, and fits a wavespeed according
+        to the advection equation:
+
+        $ \partial_t \beta + a \partial_{x_i} \beta = 0 $
+
+         Args:
+            dxis (float - NumPy 1DArray):   This is the sampling spacing in the format:
+            
+                                            [ dt, dx, dy, dz ]
+                            
+            headers (list, optional):  The headers of the data to find the characteristics of. 
+                                        Defaults to None, which uses the keys stored in the data
+                                        dictionary.
+
+            wavespeedBounds (size 2, optional): The bounds for the least squares fit. Each entry 
+                                                must be size 2. Defaults to None, which leaves the 
+                                                search unbounded, which can be kind of dangerous.
+            
+            store_ders (boolean, optional):     Whether or not to store the derivatives. Defaults
+                                                to False.
+
+            algorithm (string, optional):   Which algorithm to use to find the wavespeeds. The
+                                            valid options are:
+
+                                            - *"lucase-kande" or "l-d": An optical flow algorithm 
+                                                    that looks over a window. Much faster.
+
+                                            - "least squares" or "lsq": Uses SciPy's least squares
+                                                    to fit to the residual of the PDE. Slower, but
+                                                    more robust.
+
+            N_window (int, optional):   The size of the square window in the search problem. 
+                                        Defaults to 5.
+
+            
+        """
+        import scipy.optimize as sopt
+
+        print("Under construction")
+
+        # Find and check the bounds
+        if waveSpeedBounds is not None:
+            if len(waveSpeedBounds)!=2:
+                raise ValueError(f"Bounds not length 2 for entry {k}")
+            waveSpeedBounds = np.array(waveSpeedBounds)
+
+        cls.wavespeed_data = {}
+        if store_ders:
+            cls.dB_dt_data = {}
+            cls.dB_dxi_data = {}
+        # Sort through each of the data keys
+        for i, k in enumerate( list( cls.data.keys() ) ):
+
+            # Check to see if the key is to be used
+            if headers==None or k in headers:
+                print(f"Calculating characteristics of {k}.")
+
+                # Find the time gradient for the data
+                if "t" in cls.dims:
+                    dB_dt = np.gradient( cls.data[k], axis=0 )
+                else:
+                    raise ValueError("Time is not necessarily in the data axes.")
+
+                
+
+                # Sort through the dimensions
+                for j, kc in enumerate( cls.dims ):
+
+                    # Check to make sure this is not the time dimensions
+                    if kc != "t":
+                        print(f"\tCalculating wavespeeds along {kc}.")
+
+                        # Initialize the data
+                        cls.wavespeed_data[f"{k}:{kc}"] = np.zeros_like( cls.data[k] )
+
+                        # Find the spatial gradient of our data
+                        dB_dxi = np.gradient( cls.data[k], axis=j )
+
+                        if algorithm.lower() in ["lucas-kanade", "l-k"]:
+
+                            offset = N_window//2
+
+                            for ti in range( len( dB_dt )-N_window+1 ):
+                                for xj in range( len( dB_dxi )-N_window+1 ):
+
+                                    num = np.sum( dB_dt[ti+offset:ti+offset+N_window, xj+offset:xj+offset+N_window] * dB_dxi[ti+offset:ti+offset+N_window, xj+offset:xj+offset+N_window] )
+                                    denom = np.sum( dB_dxi[ti+offset:ti+offset+N_window, xj+offset:xj+offset+N_window]**2 )
+
+                                    if np.abs(denom)>1e-36:
+                                        cls.wavespeed_data[f"{k}:{kc}"][ti, xj] = (num/denom) * (dxis[0]/dxis[j])
+                                    elif ti>0:
+                                        cls.wavespeed_data[f"{k}:{kc}"][ti, xj] = cls.wavespeed_data[f"{k}:{kc}"][ti-1, xj]
+
+
+                        elif algorithm.lower() in ["least squares", "lsq"]:
+
+                            for ti in range( len( dB_dt ) ):
+                                print(f"\t\tWorking with time index {ti}")
+
+                                # Split derivatives into their own values
+                                dB_dt_ti = dB_dt[ti]
+                                dB_dxi_ti = dB_dxi[ti]
+
+                                # Define a function to help determine our residuals
+                                def residuals(A):
+                                    dB_dt_flat = dB_dt_ti.flatten()
+                                    dB_dxi_flat = dB_dxi_ti.flatten()
+                                    return dB_dt_flat + A * dB_dxi_flat
+
+                                A_0_flat = cls.wavespeed_data[f"{k}:{kc}"][ti].flatten()
+
+                                # Fit the wavespeeds via least squares
+                                if waveSpeedBounds is None:
+                                    cls.result = sopt.least_squares( residuals, A_0_flat, gtol=0, xtol=0 )
+                                else:
+                                    cls.result = sopt.least_squares( residuals, A_0_flat, bounds=waveSpeedBounds*dxis[j]/dxis[0], gtol=0, xtol=0 )
+
+                                # Pull the wavespeed data
+                                cls.wavespeed_data[f"{k}:{kc}"][ti] = cls.result.x * dxis[0]/dxis[j]
+
+                        if store_ders:
+                            cls.dB_dxi_data[f"{k}:{kc}"] = dB_dxi
+
+                if store_ders:
+                    cls.dB_dt_data[k] = dB_dt
+
+    def mixingData_RMI(cls, data, input_temporal_domain, input_spatial_domain, threshold=0.05, streamwise_axis='x', transverse_axis='y', species_keys=[] ):
+        """
+            This method takes the data and finds the RMI nondimensional mixing characteristics
+        according to the methods in [1].
+
+        [41] McFarland, Greenough, and Ranjan. (2011). *Computational parametric study of a 
+            Richtmyer-Meshkov instability for an inclined interface.* Physical Review E. Vol 84.
+
+        Args:
+            data (dict, NumPy NDArrays):    The data to be analyzed. The data must be in the format of:
+
+                                            [t, x, y, (z)]
+
+            input_temporal_domain (NumPy Array):    The temporal domain of the input data.
+
+            input_spatial_domain (list, NumPy Array):    The spatial domain of the input data.
+
+            streamwise_axis (str, optional):    The axis along which the flow is considered streamwise. Defaults to 'x'.
+
+            transverse_axis (str, optional):    The axis along which the flow is considered transverse. Defaults to 'y'.
+
+        Attributes:
+            mixing_width (NumPy 2D array): The calculated mixing width for the data. The shape is:
+
+        """
+        print("Under construction")
+
+        #
+        #   Calculate the mixing width for all times
+        #
+        cls.mixingWidth_data = {}
+        for k in list( data.keys() ):
+            if transverse_axis in cls.dims:
+                print(f"Calculating mixing width for {k} along {transverse_axis}.")
+
+            #if spec
+
+            cls.mixingWidth_data[k] = mixingWidth( data[k], input_spatial_domain[cls.dims.index(transverse_axis)-1], threshold=threshold )
+            cls.mixingWidth_data[k] = np.nan_to_num( cls.mixingWidth_data[k], nan=0.0, posinf=0.0, neginf=0.0 )
 
 
 #==================================================================================================
